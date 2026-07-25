@@ -99,80 +99,72 @@ export default function Home() {
 
   return (
     <main className={`app-shell mood-${mood} status-${status}`}>
-      <div className="content-column">
+      <div className="page-frame">
         <header className="site-header">
-          <div className="brand-mark" aria-hidden="true">H/Y</div>
           <div>
-            <p className="eyebrow">LANGUAGE MALFUNCTION UNIT · 01</p>
             <h1>胡言乱语生成器</h1>
             <p className="subtitle">根据你当前的精神状态，认真说一句废话。</p>
           </div>
         </header>
 
-        <form className="generator-form" onSubmit={generate}>
-          <div className="section-heading">
-            <span className="section-index">01</span>
-            <label htmlFor="topic">今天准备胡说什么</label>
-            <span className="char-count">{topic.length}/30</span>
-          </div>
-          <input
-            ref={inputRef}
-            id="topic"
-            value={topic}
-            maxLength={31}
-            onChange={(event) => setTopic(event.target.value)}
-            placeholder="例如：疯狂星期四、括号文学、考研"
-            aria-describedby="topic-hint"
-          />
-          <p id="topic-hint" className="field-hint">选题最多 30 个字。内容越具体，结论越没有用。</p>
-
-          <div className="section-heading mood-heading">
-            <span className="section-index">02</span>
-            <span id="mood-label">精神状态</span>
-            <span className="mood-note">不是生成质量</span>
-          </div>
-          <div className="mood-picker" role="radiogroup" aria-labelledby="mood-label">
-            <div className="mood-line" aria-hidden="true"><span /></div>
-            <div className="mood-options">
-              {moods.map((label, index) => (
-                <button
-                  type="button"
-                  key={label}
-                  role="radio"
-                  aria-checked={mood === index}
-                  className={mood === index ? "selected" : ""}
-                  onClick={() => setMood(index)}
-                >
-                  <span className="mood-dot" />
-                  <span>{label}</span>
-                </button>
-              ))}
+        <div className="work-area">
+          <form className="generator-form" onSubmit={generate}>
+            <div className="field-block">
+              <div className="field-title"><label htmlFor="topic">选题</label><span className="char-count">{topic.length}/30</span></div>
+              <input
+                ref={inputRef}
+                id="topic"
+                value={topic}
+                maxLength={31}
+                onChange={(event) => setTopic(event.target.value)}
+                placeholder="例如：疯狂星期四、括号文学、考研"
+                aria-describedby="topic-hint"
+              />
+              <p id="topic-hint" className="field-hint">最多 30 个字</p>
             </div>
-          </div>
 
-          <button className="primary-button" type="submit" disabled={status === "thinking"}>
-            <span>{status === "thinking" ? thinkingLines[thinkingStep] : "开始胡言乱语"}</span>
-            <span className="button-state" aria-hidden="true">{status === "thinking" ? "···" : "↵"}</span>
-          </button>
-        </form>
-
-        <section className="result-section" aria-live="polite" aria-busy={status === "thinking"}>
-          {status === "idle" && !result && <p className="empty-result">结果将在这里出现。<br /><span>目前一片理性。</span></p>}
-          {status === "thinking" && <div className="thinking-state"><span className="thinking-marker" />{thinkingLines[thinkingStep]}</div>}
-          {status === "error" && <p className="error-message">{message}</p>}
-          {status === "success" && result && (
-            <>
-              <p className="result-text">{result}</p>
-              <div className="result-actions">
-                <button type="button" onClick={() => generate()}>再胡一次</button>
-                <button type="button" onClick={copyResult}>{copied ? "已复制" : "复制"}</button>
-                <button type="button" onClick={saveImage}>{saving ? "保存中…" : "保存图片"}</button>
+            <div className="field-block mood-block">
+              <div className="field-title"><span id="mood-label">精神状态</span><span className="mood-note">这里表示状态，不是质量</span></div>
+              <div className="mood-picker" role="radiogroup" aria-labelledby="mood-label">
+                <div className="mood-line" aria-hidden="true"><span /></div>
+                <div className="mood-options">
+                  {moods.map((label, index) => (
+                    <button
+                      type="button"
+                      key={label}
+                      role="radio"
+                      aria-checked={mood === index}
+                      className={mood === index ? "selected" : ""}
+                      onClick={() => setMood(index)}
+                    ><span className="mood-dot" /><span>{label}</span></button>
+                  ))}
+                </div>
               </div>
-            </>
-          )}
-        </section>
+            </div>
 
-        <footer className="site-footer"><span>严肃生成</span><span className="footer-rule" /><span>不保证有用</span></footer>
+            <button className="primary-button" type="submit" disabled={status === "thinking"}>
+              <span>{status === "thinking" ? thinkingLines[thinkingStep] : "开始胡言乱语"}</span>
+              <span className="button-state" aria-hidden="true">{status === "thinking" ? "···" : "↵"}</span>
+            </button>
+          </form>
+
+          <section className="result-section" aria-live="polite" aria-busy={status === "thinking"}>
+            <span className="result-label">结果</span>
+            {status === "idle" && !result && <p className="empty-result">等一句<br />没有用的话。</p>}
+            {status === "thinking" && <div className="thinking-state"><span className="thinking-marker" />{thinkingLines[thinkingStep]}</div>}
+            {status === "error" && <p className="error-message">{message}</p>}
+            {status === "success" && result && (
+              <>
+                <p className="result-text">{result}</p>
+                <div className="result-actions">
+                  <button type="button" onClick={() => generate()}>再胡一次</button>
+                  <button type="button" onClick={copyResult}>{copied ? "已复制" : "复制"}</button>
+                  <button type="button" onClick={saveImage}>{saving ? "保存中…" : "保存图片"}</button>
+                </div>
+              </>
+            )}
+          </section>
+        </div>
       </div>
     </main>
   );
