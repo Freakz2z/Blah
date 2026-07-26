@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
-
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -82,9 +80,7 @@ test("renders the nonsense generator page", async () => {
 });
 
 test("keeps the preview skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8").catch(() => null),
-    readFile(new URL("preview.css", previewRoot), "utf8").catch(() => null),
+  const [page, layout] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
   ]);
@@ -98,7 +94,7 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   assert.match(layout, /胡言乱语生成器/);
   assert.doesNotMatch(layout, /_sites-preview/);
   assert.doesNotMatch(layout, /react-loading-skeleton/);
-  assert.doesNotMatch(layout, /Viewport/);
+  assert.match(layout, /export const viewport/);
 
   // Global CSS is custom, not tailwind-only
   const cssContent = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");

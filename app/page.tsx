@@ -1,11 +1,21 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /* ── Constants ─────────────────────────────────── */
 const MOODS = ["钝角", "最差", "极差", "差", "正常"];
-const THINKING_STEPS = ["正在理解选题", "正在建立不必要的联系", "正在强行得出结论"];
+const THINKING_STEPS = [
+  "正在理解选题",
+  "正在建立不必要的联系",
+  "正在强行得出结论",
+  "结论有点烫，正在吹凉",
+];
 const MAX_CHARS = 30;
+
+const CANVAS_SERIF =
+  "'Noto Serif SC','Source Han Serif SC','Songti SC','STSong','SimSun',serif";
+const CANVAS_SANS =
+  "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
 
 /* ── Component ─────────────────────────────────── */
 export default function Home() {
@@ -15,8 +25,8 @@ export default function Home() {
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
   const [thinkingStep, setThinkingStep] = useState(0);
   const [message, setMessage] = useState("");
-  const [copied, setCopied] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [animKey, setAnimKey] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
@@ -24,16 +34,38 @@ export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const copyTimerRef = useRef<number | null>(null);
+  const saveTimerRef = useRef<number | null>(null);
 
-  /* thinking animation */
+  /* thinking animation — monotonic three-act narration, no wrap-around */
   useEffect(() => {
-    if (status !== "thinking") return;
+    if (
+      status !== "thinking" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
     const timer = window.setInterval(
-      () => setThinkingStep((s) => (s + 1) % THINKING_STEPS.length),
-      580,
+      () => setThinkingStep((s) => Math.min(s + 1, THINKING_STEPS.length - 1)),
+      1200,
     );
     return () => window.clearInterval(timer);
   }, [status]);
+
+  /* Web Share availability — false during SSR/hydration, real value after */
+  const canShare = useSyncExternalStore(
+    subscribeNoop,
+    () => !!navigator.share,
+    () => false,
+  );
+
+  /* feedback timer cleanup */
+  useEffect(
+    () => () => {
+      if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    },
+    [],
+  );
 
   /* ── Theme toggle ───────────────────────────── */
   useEffect(() => {
@@ -60,7 +92,7 @@ export default function Home() {
 
   const handleTrackPointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
-    try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* synthetic */ }
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
     setDragging(true);
     setMood(getMoodFromPosition(e.clientX));
   }, [getMoodFromPosition]);
@@ -78,11 +110,11 @@ export default function Home() {
   const generate = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
+      if (status === "thinking") return;
       const clean = topic.trim();
 
       if (!clean) {
         setStatus("error");
-        setResult("");
         setMessage("先给这次胡言乱语定个选题。");
         inputRef.current?.focus();
         return;
@@ -90,7 +122,6 @@ export default function Home() {
 
       if (clean.length > MAX_CHARS) {
         setStatus("error");
-        setResult("");
         setMessage(`选题有点长，控制在 ${MAX_CHARS} 个字以内。`);
         return;
       }
@@ -102,7 +133,7 @@ export default function Home() {
       setStatus("thinking");
       setThinkingStep(0);
       setMessage("");
-      setCopied(false);
+      setCopyState("idle");
 
       try {
         const response = await fetch("/api/generate", {
@@ -114,6 +145,9 @@ export default function Home() {
 
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          if (payload.error === "rate_limited") {
+            throw new Error(`rate_limited:${response.headers.get("Retry-After") ?? ""}`);
+          }
           throw new Error(payload.error ?? "upstream");
         }
         const data = (await response.json()) as { text?: string };
@@ -126,87 +160,154 @@ export default function Home() {
         setAnimKey((k) => k + 1);
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
-        setResult("");
         setStatus("error");
-        setMessage(
-          err instanceof Error && err.message === "rate_limited"
-            ? "操作太快，稍后再胡一次。"
-            : "这次没胡出来，再试一次。",
-        );
+        if (err instanceof Error && err.message.startsWith("rate_limited")) {
+          const seconds = err.message.split(":")[1];
+          setMessage(
+            seconds
+              ? `胡得太勤了，${seconds} 秒后再来一次。`
+              : "操作太快，稍后再胡一次。",
+          );
+        } else {
+          setMessage("这次没胡出来，再试一次。");
+        }
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [topic, mood],
+    [topic, mood, status],
   );
 
-  /* ── Copy ────────────────────────────────────── */
+  /* ── Copy — clipboard API with execCommand fallback ── */
   const copyResult = useCallback(async () => {
     if (!result) return;
-    try { await navigator.clipboard.writeText(result); } catch { /* ok */ }
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(result);
+      ok = true;
+    } catch {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = result;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(textarea);
+      } catch {
+        ok = false;
+      }
+    }
+    setCopyState(ok ? "copied" : "failed");
+    if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
   }, [result]);
 
-  /* ── Save Image — pure result only ──────────── */
+  /* ── Save Image — theme-aware card with attribution footer ── */
   const saveImage = useCallback(async () => {
-    if (!result || saving) return;
-    setSaving(true);
+    if (!result || saveState === "saving") return;
+    setSaveState("saving");
 
-    await new Promise((r) => window.setTimeout(r, 80));
+    const finish = (state: "saved" | "failed") => {
+      setSaveState(state);
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => setSaveState("idle"), 1800);
+    };
 
-    const isDark = document.documentElement.getAttribute("data-theme") === "dark"
-      || (document.documentElement.getAttribute("data-theme") !== "light"
-        && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    await document.fonts.ready;
+
+    const css = getComputedStyle(document.documentElement);
+    const bg = css.getPropertyValue("--bg").trim() || "#f9f8f6";
+    const fg = css.getPropertyValue("--fg").trim() || "#171613";
+    const fgMuted = css.getPropertyValue("--fg-muted").trim() || "#716c62";
 
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
-    if (!ctx) { setSaving(false); return; }
+    if (!ctx) { finish("failed"); return; }
 
     const padding = 48;
     const fontSize = 52;
-    ctx.font = `600 ${fontSize}px 'Noto Serif SC', 'Songti SC', 'PingFang SC', serif`;
+    const footerHeight = 72;
+    ctx.font = `600 ${fontSize}px ${CANVAS_SERIF}`;
 
-    const maxWidth = 720;
-    const lines = wrapText(ctx, result, maxWidth);
+    const lines = wrapText(ctx, result, 720);
     const lineHeight = fontSize * 1.5;
     const textHeight = lines.length * lineHeight;
+    const realWidth = Math.max(...lines.map((l) => ctx.measureText(l).width));
 
-    const canvasWidth = maxWidth + padding * 2;
-    const canvasHeight = textHeight + padding * 2;
+    const canvasWidth = Math.max(Math.min(realWidth, 720), 384) + padding * 2;
+    const canvasHeight = Math.max(textHeight + padding * 2 + footerHeight, 420);
 
-    const dpr = 2;
-    canvas.width = canvasWidth * dpr;
-    canvas.height = canvasHeight * dpr;
+    const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+    canvas.width = Math.round(canvasWidth * dpr);
+    canvas.height = Math.round(canvasHeight * dpr);
     ctx.scale(dpr, dpr);
 
-    ctx.fillStyle = isDark ? "#131210" : "#f9f8f6";
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    ctx.fillStyle = isDark ? "#ebe8e2" : "#171613";
-    ctx.font = `600 ${fontSize}px 'Noto Serif SC', 'Songti SC', 'PingFang SC', serif`;
+    /* body — centered in the area above the footer */
+    ctx.fillStyle = fg;
+    ctx.font = `600 ${fontSize}px ${CANVAS_SERIF}`;
     ctx.textBaseline = "top";
+    ctx.textAlign = "center";
+    const bodyTop = (canvasHeight - footerHeight - textHeight) / 2;
     lines.forEach((line, i) => {
-      ctx.fillText(line, padding, padding + i * lineHeight);
+      ctx.fillText(line, canvasWidth / 2, bodyTop + i * lineHeight);
     });
+
+    /* footer — separator + attribution */
+    const footerTop = canvasHeight - footerHeight;
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = fg;
+    ctx.fillRect(padding, footerTop, canvasWidth - padding * 2, 1);
+    ctx.restore();
+
+    ctx.font = `400 20px ${CANVAS_SANS}`;
+    ctx.fillStyle = fgMuted;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.fillText(
+      `「${topic.trim()}」·精神状态：${MOODS[mood]}`,
+      padding,
+      footerTop + footerHeight / 2,
+    );
+    ctx.textAlign = "right";
+    ctx.fillText("胡言乱语生成器", canvasWidth - padding, footerTop + footerHeight / 2);
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, "image/png"),
     );
-    if (!blob) { setSaving(false); return; }
+    if (!blob) { finish("failed"); return; }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "胡言乱语.png";
+    a.download = `胡言乱语-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}-${MOODS[mood]}.png`;
     a.click();
     URL.revokeObjectURL(url);
-    setSaving(false);
-  }, [result, saving]);
+    finish("saved");
+  }, [result, saveState, topic, mood]);
+
+  /* ── Share — mobile only, with attribution ───── */
+  const shareResult = useCallback(async () => {
+    if (!result) return;
+    try {
+      await navigator.share({
+        text: `${result}\n——「${topic.trim()}」·精神状态：${MOODS[mood]}`,
+        url: location.href,
+      });
+    } catch {
+      /* AbortError — user dismissed the sheet */
+    }
+  }, [result, topic, mood]);
 
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
   const canGenerate = status !== "thinking";
-  const hasResult = status === "success" && result;
+  const hasResult = result !== "";
   const maxIndex = MOODS.length - 1;
   const fillPercent = (mood / maxIndex) * 100;
 
@@ -216,6 +317,10 @@ export default function Home() {
       <div className="page-frame">
         {/* ── Header ───────────────────────────── */}
         <header className="site-header">
+          <div className="site-title">
+            <h1>胡言乱语生成器</h1>
+            <p className="subtitle">根据你当前的精神状态，认真说一句废话。</p>
+          </div>
           <button
             className="theme-toggle"
             type="button"
@@ -230,17 +335,20 @@ export default function Home() {
           >
             {theme === "auto" ? "◐" : theme === "light" ? "○" : "●"}
           </button>
-          <h1>胡言乱语生成器</h1>
         </header>
 
         {/* ── Main Content ──────────────────────── */}
         <div className="main-content">
           {/* Topic */}
-          <form className="generator-form" onSubmit={generate}>
+          <form id="gen-form" className="generator-form" onSubmit={generate}>
             <div className="field-block">
               <div className="field-label-row">
-                <label htmlFor="topic">选题</label>
-                <span className={`char-count${isOverLimit ? " over-limit" : ""}`}>
+                <label htmlFor="topic" className="micro-label">选题</label>
+                <span
+                  id="char-count"
+                  role="status"
+                  className={`char-count${isOverLimit ? " over-limit" : ""}`}
+                >
                   {topic.length}/{MAX_CHARS}
                 </span>
               </div>
@@ -255,6 +363,8 @@ export default function Home() {
                 placeholder="例如：疯狂星期四、括号文学、考研…"
                 autoComplete="off"
                 spellCheck={false}
+                aria-describedby="char-count"
+                aria-invalid={isOverLimit || undefined}
               />
             </div>
           </form>
@@ -262,7 +372,7 @@ export default function Home() {
           {/* Mood Slider */}
           <div className="mood-block">
             <div className="mood-label-row">
-              <span className="mood-label">精神状态</span>
+              <span className="mood-label micro-label">精神状态</span>
             </div>
 
             <div
@@ -280,96 +390,156 @@ export default function Home() {
               onPointerUp={handleTrackPointerUp}
               onPointerCancel={handleTrackPointerUp}
               onKeyDown={(e) => {
-                if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+                if (e.key === "ArrowLeft" || e.key === "ArrowDown" || e.key === "PageDown") {
                   e.preventDefault();
                   setMood(Math.max(0, mood - 1));
-                } else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+                } else if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "PageUp") {
                   e.preventDefault();
                   setMood(Math.min(maxIndex, mood + 1));
+                } else if (e.key === "Home") {
+                  e.preventDefault();
+                  setMood(0);
+                } else if (e.key === "End") {
+                  e.preventDefault();
+                  setMood(maxIndex);
                 }
               }}
             >
-              <div className="mood-track-fill" style={{ width: `${fillPercent}%` }} />
+              <div
+                className="mood-track-fill"
+                style={{ width: `calc(${fillPercent} / 100 * (100% - 14px))` }}
+              />
               <div className="mood-labels">
                 {MOODS.map((label, i) => (
-                  <span
+                  <button
                     key={label}
+                    type="button"
+                    tabIndex={-1}
+                    aria-hidden="true"
                     className={`mood-label-item${mood === i ? " active" : ""}`}
                     style={{ left: `${(i / maxIndex) * 100}%` }}
+                    onClick={() => setMood(i)}
                   >
                     {label}
-                  </span>
+                  </button>
                 ))}
               </div>
-              <div className="mood-thumb" style={{ left: `${fillPercent}%` }} />
+              <div
+                className="mood-thumb"
+                style={{ left: `calc(7px + ${fillPercent} / 100 * (100% - 14px))` }}
+              />
             </div>
           </div>
 
-          {/* Primary button */}
+          {/* Primary button — lives outside the form, submits via form attr */}
           <button
             className="primary-button"
             type="submit"
-            disabled={!canGenerate}
-            onClick={() => generate()}
-            aria-label={
-              status === "thinking" ? THINKING_STEPS[thinkingStep] : "开始胡言乱语"
-            }
+            form="gen-form"
+            aria-disabled={!canGenerate || undefined}
+            aria-label={status === "thinking" ? "正在生成……" : "开始胡言乱语"}
           >
-            <span>
-              {status === "thinking" ? THINKING_STEPS[thinkingStep] : "开始胡言乱语"}
-            </span>
+            <span>{status === "thinking" ? "正在生成……" : "开始胡言乱语"}</span>
             <span className="btn-hint" aria-hidden="true">
               {status === "thinking" ? "" : "↵"}
             </span>
           </button>
 
           {/* ── Result ──────────────────────────── */}
-          <section
-            className="result-section"
-            aria-live="polite"
-            aria-busy={status === "thinking"}
-          >
-            {status === "idle" && !result && (
+          <section className="result-section" aria-live="polite">
+            {status === "idle" && !hasResult && (
               <p className="empty-message">等一句没有用的话</p>
             )}
 
             {status === "thinking" && (
               <div className="thinking-indicator">
                 <span className="thinking-dot" aria-hidden="true" />
-                {THINKING_STEPS[thinkingStep]}
+                <span key={thinkingStep} className="thinking-text">
+                  {THINKING_STEPS[thinkingStep]}
+                </span>
               </div>
             )}
 
             {status === "error" && (
-              <p className="error-message" role="alert">
-                {message || "这次没胡出来，再试一次。"}
-              </p>
+              <>
+                <p className="error-message">
+                  {message || "这次没胡出来，再试一次。"}
+                </p>
+                {!hasResult && (
+                  <div className="result-actions">
+                    <button type="button" onClick={() => generate()}>
+                      再试一次
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
             {hasResult && (
               <>
-                <p key={animKey} className="result-text animate-in">
+                <p
+                  key={animKey}
+                  className={`result-text${status === "thinking" ? " stale" : " animate-in"}`}
+                >
                   {result}
                 </p>
                 <div className="result-actions">
-                  <button type="button" onClick={() => generate()}>
+                  <button
+                    type="button"
+                    disabled={status === "thinking"}
+                    onClick={() => generate()}
+                  >
                     再胡一次
                   </button>
                   <button
                     type="button"
+                    disabled={status === "thinking"}
                     onClick={copyResult}
-                    className={copied ? "copied" : ""}
+                    className={
+                      copyState === "copied"
+                        ? "copied"
+                        : copyState === "failed"
+                          ? "copy-failed"
+                          : ""
+                    }
                   >
-                    {copied ? "已复制" : "复制"}
+                    {copyState === "copied"
+                      ? "已复制"
+                      : copyState === "failed"
+                        ? "复制失败"
+                        : "复制"}
                   </button>
                   <button
                     type="button"
+                    disabled={status === "thinking" || saveState === "saving"}
                     onClick={saveImage}
-                    className={saving ? "saving" : ""}
-                    disabled={saving}
+                    className={
+                      saveState === "saving"
+                        ? "saving"
+                        : saveState === "saved"
+                          ? "saved"
+                          : saveState === "failed"
+                            ? "save-failed"
+                            : ""
+                    }
                   >
-                    {saving ? "保存中…" : "保存图片"}
+                    {saveState === "saving"
+                      ? "保存中…"
+                      : saveState === "saved"
+                        ? "已保存"
+                        : saveState === "failed"
+                          ? "保存失败"
+                          : "保存图片"}
                   </button>
+                  {canShare && (
+                    <button
+                      type="button"
+                      disabled={status === "thinking"}
+                      onClick={shareResult}
+                    >
+                      分享
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -378,6 +548,10 @@ export default function Home() {
       </div>
     </div>
   );
+}
+
+function subscribeNoop() {
+  return () => {};
 }
 
 /* ── Canvas text wrapping helper ──────────────── */
