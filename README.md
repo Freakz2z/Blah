@@ -1,68 +1,82 @@
-# 胡言乱语生成器
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="胡言乱语生成器：输入选题，选择精神状态，生成一句一本正经的荒谬中文。">
+</p>
 
-输入一个选题，选一档「精神状态」，认真说一句 25～65 字的废话。
+<p align="center">
+  <a href="https://blah.freakz2z.com">在线体验</a> · <a href="#快速开始">本地运行</a> · <a href="#生成接口">生成接口</a>
+</p>
 
-单页应用：Next.js 16 + React 19，通过 [vinext](https://github.com/cloudflare/vinext)
-运行在 Cloudflare Workers 上，由 OpenAI Sites 平台托管（`.openai/hosting.json`）。
-文案生成调用 DeepSeek Chat API。
+一个极简的中文文字生成器：给它一个选题，再选择当前的精神状态，它会认真地说一句废话。
+
+> **选题**：括号文学　·　**精神状态**：钝角<br>
+> 括号里的字太重了，我必须拿个称去秤一下才能确定是个感叹号还是省略号。
+
+## 它有什么不同
+
+- **五种精神状态**：正常、差、极差、最差、钝角。它们不是“质量档位”，而是不同的语言逻辑方式。
+- **不只是随机拼词**：每次生成围绕选题的具体场景，并选择错误因果、字面误解、流程错位等荒谬机制。
+- **双候选筛选**：并行生成两个风格不同的候选句，再按选题相关性、状态特征和重复度选择较好的一条；都不合格时会严格重试一次。
+- **可直接带走**：生成结果支持再次生成、复制和保存图片。
+
+## 精神状态
+
+| 状态 | 阅读感受 |
+| --- | --- |
+| 正常 | 第一眼像观点，第二眼才发现推理歪了。 |
+| 差 | 每一段都能懂，连起来却明显不成立。 |
+| 极差 | 句法还稳，世界观已经开始漏风。 |
+| 最差 | 像在认真讲一场无法解释的事故。 |
+| 钝角 | 理解得很认真，但方向总是偏了一百多度。 |
 
 ## 快速开始
+
+需要 Node.js 22.13 或更高版本。
 
 ```bash
 npm install
 npm run dev
 ```
 
-不配置 API key 也能跑：`/api/generate` 会返回内置兜底文案（并在日志里警告）。
-要接真实模型，为运行环境提供以下变量（本地可放 `.env`，已被 gitignore）：
+本地未配置生成服务凭据时，应用仍可启动，并返回内置兜底文案。
 
-| 变量 | 必需 | 说明 |
-| --- | --- | --- |
-| `DEEPSEEK_API_KEY` | 是 | DeepSeek API 密钥；缺失时静默降级为兜底文案 |
-| `DEEPSEEK_API_BASE` | 否 | 覆盖上游地址，默认 `https://api.deepseek.com/chat/completions` |
-| `DEEPSEEK_MODEL` | 否 | 覆盖模型名，默认 `deepseek-v4-flash` |
+## 生成接口
 
-## 生成管线（`app/api/generate/`）
+```http
+POST /api/generate
+Content-Type: application/json
+```
 
-`POST /api/generate`，请求体 `{ topic: string, mood?: "正常"|"差"|"极差"|"最差"|"钝角" }`，
-响应 `{ text }`。质量优先的多候选管线：
+```json
+{
+  "topic": "疯狂星期四",
+  "mood": "极差"
+}
+```
 
-1. **提示词**（`prompts.ts`）：公共规则 + 所选精神状态（各带一句风格示范）+
-   按档位白名单随机抽取的 1~2 条「本次优先荒谬机制」（12 条机制池，两个候选的机制互斥）。
-2. **双候选并行**（`route.ts`）：temperature 1.25 / 1.45 各发一次
-   （top_p 0.95、frequency_penalty 0.3、`stop: ["\n"]`、只接受 `finish_reason === "stop"`）。
-3. **清洗与校验**（`quality.ts`）：剥前缀/引号/markdown 残留；校验 25~65 码点、
-   字符白名单、汉字占比、提示词泄漏、重复度、单句性、标点占比，并与同选题最近
-   3 条结果做 bigram 查重。
-4. **启发式打分二选一**：选题相关性主导，机制连接词按档位加分，高频套路词
-   （奶茶/猫/宇宙…，选题自带则豁免）减分。
-5. 双候选全废 → 低温严格重试一次 → 仍失败返回 `502 {error:"generation_failed"}`。
+成功响应：
 
-每次用户请求最多 3 次上游调用。限流在 Worker 入口（`worker/index.ts`）：
-Durable Object 按 `CF-Connecting-IP` 每 60 秒最多 12 次，超限
-`429 {error:"rate_limited"}` + `Retry-After`；无效请求体不消耗配额。
+```json
+{ "text": "……" }
+```
 
-## 常用命令
+`topic` 最长 30 个字；`mood` 可选值为 `正常`、`差`、`极差`、`最差`、`钝角`，省略时默认 `正常`。接口会对异常请求进行限流，并在生成结果不符合要求时自动换一种策略重试。
 
-- `npm run dev` — 本地开发（Miniflare 模拟 Workers 绑定）
-- `npm run build` — vinext 构建，产物在 `dist/`
-- `npm test` — 构建 + 全部测试（SSR 渲染断言 + 生成管线单元测试）
-- `npm run test:unit` — 只跑生成管线单元测试（无需构建，秒级）
-- `npm run lint` — ESLint
-- `npm run db:generate` — 生成 Drizzle 迁移（当前未使用数据库）
+## 开发与测试
 
-## 脚手架保留能力（当前未使用）
+```bash
+npm run dev         # 本地开发
+npm run build       # 生产构建
+npm run test        # 全部测试
+npm run test:unit   # 仅运行生成质量测试
+npm run lint        # 代码检查
+```
 
-项目由 `site-creator-vinext-starter` 模板生成，以下能力保留但未接入应用：
+核心生成逻辑位于 `app/api/generate/`：
 
-- **D1 + Drizzle**：`db/schema.ts` 刻意为空；`examples/d1/` 是可选的 notes 示例；
-  启用需在 `.openai/hosting.json` 声明绑定。
-- **Sign in with ChatGPT**：`app/chatgpt-auth.ts` 提供 `getChatGPTUser()` /
-  `requireChatGPTUser()` 等辅助函数，读取平台注入的 `oai-authenticated-user-*`
-  请求头；`/signin-with-chatgpt`、`/signout-with-chatgpt`、`/callback` 由托管平台
-  拥有，应用内勿实现。SIWC 只证明身份，不证明工作区成员资格。
-- `app/_sites-preview/` 是平台建站期间的占位骨架屏，测试会断言它不出现在
-  真实渲染产物中。
+- `prompts.ts`：精神状态、荒谬机制与提示词组装。
+- `quality.ts`：结果清洗、校验、评分和近似重复检测。
+- `validation.ts`：选题输入校验。
 
-本项目不使用 `wrangler.jsonc`：Worker 绑定在 `vite.config.ts` 内联声明，
-构建时生成 `dist/server/wrangler.json`。要求 Node >= 22.13.0。
+## 参与改进
+
+欢迎提交 Issue 或 Pull Request。比起“更疯”，我们更想让每一档精神状态都更有自己的一套歪理。

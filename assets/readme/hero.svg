@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">胡言乱语生成器</title>
+  <desc id="desc">输入选题，选择精神状态，生成一句一本正经的荒谬中文。</desc>
+  <rect width="1200" height="360" rx="28" fill="#f9f8f6"/>
+  <path d="M64 52H1136" stroke="#171613" stroke-width="2" opacity=".12"/>
+  <text x="64" y="104" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" letter-spacing="3">一个选题 / 五档状态 / 一句废话</text>
+  <text x="64" y="184" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="68" font-weight="700">胡言乱语生成器</text>
+  <text x="68" y="226" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="25">一个选题，一档精神状态，一句严肃的废话。</text>
+  <path d="M68 262H177" stroke="#c0392b" stroke-width="5"/>
+  <g transform="translate(710 65)">
+    <rect width="426" height="230" rx="18" fill="#f1efea" stroke="#171613" stroke-width="2"/>
+    <text x="30" y="45" fill="#9a948a" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18">选题 / 括号文学</text>
+    <path d="M30 78H396" stroke="#171613" stroke-width="2" opacity=".14"/>
+    <g transform="translate(30 106)">
+      <circle cx="0" cy="0" r="9" fill="#171613"/>
+      <circle cx="88" cy="0" r="9" fill="#171613"/>
+      <circle cx="176" cy="0" r="9" fill="#171613"/>
+      <circle cx="264" cy="0" r="9" fill="#171613"/>
+      <circle cx="352" cy="0" r="12" fill="#c0392b"/>
+      <path d="M0 0H352" stroke="#171613" stroke-width="2" opacity=".18"/>
+      <text x="-10" y="38" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">钝角</text>
+      <text x="320" y="38" fill="#171613" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17" font-weight="700">正常</text>
+    </g>
+    <text x="30" y="188" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="24" font-weight="700">“括号里的字太重了，得先拿去称。”</text>
+  </g>
+</svg>
