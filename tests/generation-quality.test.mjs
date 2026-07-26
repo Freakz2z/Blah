@@ -12,6 +12,7 @@ import {
 } from "../app/api/generate/quality.ts";
 import {
   COMMON_PROMPT,
+  COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
   MENTAL_STATE_PROMPTS,
   GENERATION_LENGTH_PROMPTS,
@@ -181,6 +182,7 @@ test("buildSystemPrompt layers common, tier, mechanism, and strict parts", () =>
   assert.ok(!prompt.includes("严格执行"));
   assert.ok(buildSystemPrompt("钝角", ["字面误解"], true).includes("严格执行"));
   assert.ok(buildSystemPrompt("钝角", ["字面误解"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
+  assert.ok(buildSystemPrompt("钝角", ["字面误解"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["钝角"]));
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {

@@ -123,9 +123,15 @@ export async function POST(request: Request) {
 
   const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
   const draw = drawMechanismSets(mood);
+  // Short and medium sentences cannot faithfully carry two mechanisms.
+  // Keeping one preserves a clear absurd turn instead of forcing candidates
+  // over the selected length limit.
+  const candidateMechanisms: [string[], string[]] = generationLength !== "正常"
+    ? [[draw.candidates[0][0]], [draw.candidates[1][0]]]
+    : draw.candidates;
 
   const settled = await Promise.allSettled(
-    draw.candidates.map((mechanisms, i) =>
+    candidateMechanisms.map((mechanisms, i) =>
       requestCompletion(
         endpoint,
         apiKey,
@@ -154,7 +160,7 @@ export async function POST(request: Request) {
       topic,
       mood,
       similarity,
-      draw.candidates[index],
+      candidateMechanisms[index],
       generationLength,
     );
     valid.push({ text, score, topicHit, length, index });

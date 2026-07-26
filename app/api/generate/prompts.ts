@@ -50,8 +50,19 @@ ${EXEMPLAR_NOTE}：选题「考试」→${EXEMPLAR_SENTENCES[3]}`,
 ${EXEMPLAR_NOTE}：选题「画大饼」→${EXEMPLAR_SENTENCES[4]}`,
 };
 
+/** Long-form state prompts deliberately contain detailed pacing and examples.
+ * They are counterproductive for a 4–8 character result, so short mode keeps
+ * the state distinction while removing every instruction that needs a setup. */
+export const COMPACT_MENTAL_STATE_PROMPTS: Record<string, string> = {
+  正常: "当前状态【正常】：像一句冷静判断，只留一处轻微但明显错误的推理。",
+  差: "当前状态【差】：认真地把一个错误因果压缩成短句，自己毫不怀疑。",
+  极差: "当前状态【极差】：让一个抽象概念做不可能的动作，结论要笃定。",
+  最差: "当前状态【最差】：抓住选题里的具体东西，突然得出不合常理的动作或结论。",
+  钝角: "当前状态【钝角】：把选题按字面理解，得出诚恳但笨拙的结论。",
+};
+
 export const GENERATION_LENGTH_PROMPTS: Record<GenerationLength, string> = {
-  精辟: "生成长度【精辟】：只写4到8个汉字。用一个完整的短句或判断直接落下荒谬点，不铺垫、不用逗号、不解释；短，但必须围绕选题且读得懂。",
+  精辟: "生成长度【精辟】：只写4到8个汉字。用一个完整的短句或判断直接落下荒谬点，不铺垫、不用逗号、不解释；宁可删到更短，也绝不能超过8个汉字。示范（不可复用）：「括号文学」→「括号太重。」",
   中等: "生成长度【中等】：只写12到24个汉字。保留一个具体细节和一次荒谬转折，句子紧凑，不展开第二层解释。",
   正常: "生成长度【正常】：只写25到65个汉字。允许完整铺垫、转折与结论，但不要凑字数。",
 };
@@ -120,7 +131,7 @@ export function buildSystemPrompt(
 ): string {
   const parts = [
     COMMON_PROMPT,
-    MENTAL_STATE_PROMPTS[mood],
+    generationLength !== "正常" ? COMPACT_MENTAL_STATE_PROMPTS[mood] : MENTAL_STATE_PROMPTS[mood],
     mechanisms.map((name) => MECHANISM_HINTS[name]).join("\n"),
     GENERATION_LENGTH_PROMPTS[generationLength],
   ];
