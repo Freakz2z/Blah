@@ -1,98 +1,68 @@
-# vinext-starter
+# 胡言乱语生成器
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+输入一个选题，选一档「精神状态」，认真说一句 25～65 字的废话。
 
-## Prerequisites
+单页应用：Next.js 16 + React 19，通过 [vinext](https://github.com/cloudflare/vinext)
+运行在 Cloudflare Workers 上，由 OpenAI Sites 平台托管（`.openai/hosting.json`）。
+文案生成调用 DeepSeek Chat API。
 
-- Node.js `>=22.13.0`
-
-## Quick Start
+## 快速开始
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+不配置 API key 也能跑：`/api/generate` 会返回内置兜底文案（并在日志里警告）。
+要接真实模型，为运行环境提供以下变量（本地可放 `.env`，已被 gitignore）：
 
-## Included Shape
+| 变量 | 必需 | 说明 |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | 是 | DeepSeek API 密钥；缺失时静默降级为兜底文案 |
+| `DEEPSEEK_API_BASE` | 否 | 覆盖上游地址，默认 `https://api.deepseek.com/chat/completions` |
+| `DEEPSEEK_MODEL` | 否 | 覆盖模型名，默认 `deepseek-v4-flash` |
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+## 生成管线（`app/api/generate/`）
 
-## Workspace Auth Headers
+`POST /api/generate`，请求体 `{ topic: string, mood?: "正常"|"差"|"极差"|"最差"|"钝角" }`，
+响应 `{ text }`。质量优先的多候选管线：
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+1. **提示词**（`prompts.ts`）：公共规则 + 所选精神状态（各带一句风格示范）+
+   按档位白名单随机抽取的 1~2 条「本次优先荒谬机制」（12 条机制池，两个候选的机制互斥）。
+2. **双候选并行**（`route.ts`）：temperature 1.25 / 1.45 各发一次
+   （top_p 0.95、frequency_penalty 0.3、`stop: ["\n"]`、只接受 `finish_reason === "stop"`）。
+3. **清洗与校验**（`quality.ts`）：剥前缀/引号/markdown 残留；校验 25~65 码点、
+   字符白名单、汉字占比、提示词泄漏、重复度、单句性、标点占比，并与同选题最近
+   3 条结果做 bigram 查重。
+4. **启发式打分二选一**：选题相关性主导，机制连接词按档位加分，高频套路词
+   （奶茶/猫/宇宙…，选题自带则豁免）减分。
+5. 双候选全废 → 低温严格重试一次 → 仍失败返回 `502 {error:"generation_failed"}`。
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+每次用户请求最多 3 次上游调用。限流在 Worker 入口（`worker/index.ts`）：
+Durable Object 按 `CF-Connecting-IP` 每 60 秒最多 12 次，超限
+`429 {error:"rate_limited"}` + `Retry-After`；无效请求体不消耗配额。
 
-Treat the full name as optional and fall back to email when it is absent:
+## 常用命令
 
-```tsx
-import { headers } from "next/headers";
+- `npm run dev` — 本地开发（Miniflare 模拟 Workers 绑定）
+- `npm run build` — vinext 构建，产物在 `dist/`
+- `npm test` — 构建 + 全部测试（SSR 渲染断言 + 生成管线单元测试）
+- `npm run test:unit` — 只跑生成管线单元测试（无需构建，秒级）
+- `npm run lint` — ESLint
+- `npm run db:generate` — 生成 Drizzle 迁移（当前未使用数据库）
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
+## 脚手架保留能力（当前未使用）
 
-  const displayName = fullName ?? email;
-  // ...
-}
-```
+项目由 `site-creator-vinext-starter` 模板生成，以下能力保留但未接入应用：
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+- **D1 + Drizzle**：`db/schema.ts` 刻意为空；`examples/d1/` 是可选的 notes 示例；
+  启用需在 `.openai/hosting.json` 声明绑定。
+- **Sign in with ChatGPT**：`app/chatgpt-auth.ts` 提供 `getChatGPTUser()` /
+  `requireChatGPTUser()` 等辅助函数，读取平台注入的 `oai-authenticated-user-*`
+  请求头；`/signin-with-chatgpt`、`/signout-with-chatgpt`、`/callback` 由托管平台
+  拥有，应用内勿实现。SIWC 只证明身份，不证明工作区成员资格。
+- `app/_sites-preview/` 是平台建站期间的占位骨架屏，测试会断言它不出现在
+  真实渲染产物中。
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+本项目不使用 `wrangler.jsonc`：Worker 绑定在 `vite.config.ts` 内联声明，
+构建时生成 `dist/server/wrangler.json`。要求 Node >= 22.13.0。

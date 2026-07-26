@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { normalizeTopic } from "../app/api/generate/validation";
 
 interface Env {
   ASSETS: Fetcher;
@@ -49,6 +50,45 @@ interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+const MAX_PAYLOAD_BYTES = 4096;
+
+/** Reads the request body under a hard byte cap. The Content-Length header
+ * can't be trusted (chunked / HTTP2 uploads may omit it), so the clone's
+ * stream is read incrementally and aborted the moment it exceeds the cap —
+ * never buffered unbounded. */
+async function readSmallJsonPayload(request: Request): Promise<{ topic?: unknown } | null> {
+  const declared = Number(request.headers.get("Content-Length") ?? "0");
+  if (!Number.isFinite(declared) || declared > MAX_PAYLOAD_BYTES) return null;
+  const body = request.clone().body;
+  if (!body) return null;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > MAX_PAYLOAD_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as { topic?: unknown };
+  } catch {
+    return null;
+  }
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -60,6 +100,13 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/generate" && request.method === "POST") {
+      // Reject invalid payloads before touching the rate limiter so bad
+      // requests can't burn a client's quota (the route re-validates).
+      const payload = await readSmallJsonPayload(request);
+      if (!payload || normalizeTopic(payload.topic) === null) {
+        return Response.json({ error: "invalid_topic" }, { status: 400 });
+      }
+
       const clientIp = request.headers.get("CF-Connecting-IP") ?? "anonymous";
       const limiterId = env.RATE_LIMITER.idFromName(clientIp);
       const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://rate-limit/check");
