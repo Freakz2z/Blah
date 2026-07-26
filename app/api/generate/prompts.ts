@@ -4,14 +4,16 @@
  * 1-2 randomly drawn "priority mechanism" lines (per-tier whitelist, the two
  * parallel candidates always get disjoint mechanisms). Instruction order
  * matters for small non-reasoning models: format rules first, the dynamic
- * mechanism line last where compliance is highest. */
+ * mechanism and length lines last where compliance is highest. */
+
+import type { GenerationLength } from "./validation";
 
 export const COMMON_PROMPT = `你是「胡言乱语生成器」，围绕用户给出的选题写一句荒谬但通顺的中文。
 
 输出格式（最优先，必须全部做到）：
 1. 只输出这一句话本身，第一个字就是句子的第一个字，以句号、问号或感叹号结尾。
 2. 不写标题、解释、引号、序号、开场白，不出现精神状态名称。
-3. 全句25到65个汉字。
+3. 全句字数严格遵从「生成长度」要求。
 
 写法：
 1. 素材只从选题本身取：它包含的字词、场景、工具、涉及的人、行业上下游的细节；先想出选题的三个具体细节，挑最不起眼的那个展开。
@@ -48,6 +50,12 @@ ${EXEMPLAR_NOTE}：选题「考试」→${EXEMPLAR_SENTENCES[3]}`,
 ${EXEMPLAR_NOTE}：选题「画大饼」→${EXEMPLAR_SENTENCES[4]}`,
 };
 
+export const GENERATION_LENGTH_PROMPTS: Record<GenerationLength, string> = {
+  精辟: "生成长度【精辟】：只写4到8个汉字。用一个完整的短句或判断直接落下荒谬点，不铺垫、不用逗号、不解释；短，但必须围绕选题且读得懂。",
+  中等: "生成长度【中等】：只写12到24个汉字。保留一个具体细节和一次荒谬转折，句子紧凑，不展开第二层解释。",
+  正常: "生成长度【正常】：只写25到65个汉字。允许完整铺垫、转折与结论，但不要凑字数。",
+};
+
 export const MECHANISM_HINTS: Record<string, string> = {
   错误因果: "本次优先机制：错误因果——用「所以、既然、难怪」把两件无关的事认真连成因果，并对结果照单全收。",
   字面误解: "本次优先机制：字面误解——把选题里的一个词完全按字面意思执行或防备到底。",
@@ -73,8 +81,14 @@ export const TIER_MECHANISMS: Record<string, string[]> = {
   钝角: ["字面误解", "单位错乱", "细节放大", "伪统计"],
 };
 
-const STRICT_SUFFIX =
-  "严格执行：只输出一句25到65个汉字的中文，不换行、不解释、不加引号和任何前缀，写完立即停止。";
+function strictSuffix(generationLength: GenerationLength): string {
+  const { min, max } = {
+    精辟: { min: 4, max: 8 },
+    中等: { min: 12, max: 24 },
+    正常: { min: 25, max: 65 },
+  }[generationLength];
+  return `严格执行：只输出一句${min}到${max}个汉字的中文，不换行、不解释、不加引号和任何前缀，写完立即停止。`;
+}
 
 export interface MechanismDraw {
   /** Mechanism names for the two parallel candidates (always disjoint). */
@@ -98,12 +112,18 @@ export function drawMechanismSets(mood: string): MechanismDraw {
   return { candidates: [a, b], retry };
 }
 
-export function buildSystemPrompt(mood: string, mechanisms: string[], strict = false): string {
+export function buildSystemPrompt(
+  mood: string,
+  mechanisms: string[],
+  strict = false,
+  generationLength: GenerationLength = "正常",
+): string {
   const parts = [
     COMMON_PROMPT,
     MENTAL_STATE_PROMPTS[mood],
     mechanisms.map((name) => MECHANISM_HINTS[name]).join("\n"),
+    GENERATION_LENGTH_PROMPTS[generationLength],
   ];
-  if (strict) parts.push(STRICT_SUFFIX);
+  if (strict) parts.push(strictSuffix(generationLength));
   return parts.join("\n\n");
 }

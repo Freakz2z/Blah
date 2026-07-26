@@ -40,7 +40,7 @@ test("renders the nonsense generator page", async () => {
   // Topic input
   assert.match(html, /<label\s[^>]*for="topic"[^>]*>/i);
   assert.match(html, /id="topic"/);
-  assert.match(html, /placeholder="例如：疯狂星期四、括号文学、考研/);
+  assert.match(html, /placeholder="输入选题"/);
 
   // Char count — RSC wraps text segments with comment markers
   assert.match(html, /0<!.*?\/.*?30</);
@@ -54,6 +54,16 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /差/);
   assert.match(html, /正常/);
   assert.match(html, /aria-valuenow="4"/);
+
+  // Generation-length controls
+  assert.match(html, /生成长度/);
+  assert.match(html, /role="radiogroup"/);
+  assert.match(html, /role="radio"/);
+  assert.match(html, /精辟/);
+  assert.match(html, /4–8字/);
+  assert.match(html, /中等/);
+  assert.match(html, /12–24字/);
+  assert.match(html, /25–65字/);
 
   // Mood label
 

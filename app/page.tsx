@@ -4,6 +4,11 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 /* ── Constants ─────────────────────────────────── */
 const MOODS = ["钝角", "最差", "极差", "差", "正常"];
+const LENGTH_OPTIONS = [
+  { value: "精辟", range: "4–8字" },
+  { value: "中等", range: "12–24字" },
+  { value: "正常", range: "25–65字" },
+] as const;
 const THINKING_STEPS = [
   "正在理解选题",
   "正在建立不必要的联系",
@@ -21,6 +26,7 @@ const CANVAS_SANS =
 export default function Home() {
   const [topic, setTopic] = useState("");
   const [mood, setMood] = useState(4); /* "正常" — last index */
+  const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]["value"]>("正常");
   const [result, setResult] = useState("");
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
   const [thinkingStep, setThinkingStep] = useState(0);
@@ -132,7 +138,7 @@ export default function Home() {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: clean, mood: MOODS[mood] }),
+          body: JSON.stringify({ topic: clean, mood: MOODS[mood], length: generationLength }),
           signal: controller.signal,
         });
 
@@ -168,7 +174,7 @@ export default function Home() {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [topic, mood, status],
+    [topic, mood, generationLength, status],
   );
 
   /* ── Copy — clipboard API with execCommand fallback ── */
@@ -410,6 +416,39 @@ export default function Home() {
               />
             </div>
           </div>
+
+          <fieldset className="length-block" disabled={status === "thinking"}>
+            <legend className="micro-label">生成长度</legend>
+            <div className="length-options" role="radiogroup" aria-label="生成长度">
+              {LENGTH_OPTIONS.map(({ value, range }, index) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  className={`length-option${generationLength === value ? " active" : ""}`}
+                  aria-checked={generationLength === value}
+                  tabIndex={generationLength === value ? 0 : -1}
+                  onClick={() => setGenerationLength(value)}
+                  onKeyDown={(event) => {
+                    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                      ? 1
+                      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                        ? -1
+                        : 0;
+                    if (!direction) return;
+                    event.preventDefault();
+                    const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
+                    setGenerationLength(LENGTH_OPTIONS[nextIndex].value);
+                    const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
+                    options?.[nextIndex]?.focus();
+                  }}
+                >
+                  <span>{value}</span>
+                  <small>{range}</small>
+                </button>
+              ))}
+            </div>
+          </fieldset>
 
           {/* Primary button — lives outside the form, submits via form attr */}
           <button

@@ -14,12 +14,16 @@ import {
   COMMON_PROMPT,
   EXEMPLAR_SENTENCES,
   MENTAL_STATE_PROMPTS,
+  GENERATION_LENGTH_PROMPTS,
   MECHANISM_HINTS,
   TIER_MECHANISMS,
   buildSystemPrompt,
   drawMechanismSets,
 } from "../app/api/generate/prompts.ts";
-import { normalizeTopic } from "../app/api/generate/validation.ts";
+import {
+  normalizeGenerationLength,
+  normalizeTopic,
+} from "../app/api/generate/validation.ts";
 
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
@@ -60,6 +64,15 @@ test("validateGeneratedText accepts a well-formed sentence", () => {
 test("validateGeneratedText rejects out-of-range lengths", () => {
   assert.equal(validateGeneratedText("太短了。", "考研"), "length");
   assert.equal(validateGeneratedText("很".repeat(66), "考研"), "length");
+});
+
+test("validateGeneratedText applies the selected generation-length contract", () => {
+  assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "精辟"), null);
+  assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "中等"), "length");
+  assert.equal(
+    validateGeneratedText("考研先别急着下结论，它正排队解释自己。", "考研", "正常", "中等"),
+    null,
+  );
 });
 
 test("validateGeneratedText rejects non-Chinese garbage but exempts topic chars", () => {
@@ -167,6 +180,7 @@ test("buildSystemPrompt layers common, tier, mechanism, and strict parts", () =>
   assert.ok(prompt.includes(MECHANISM_HINTS["字面误解"]));
   assert.ok(!prompt.includes("严格执行"));
   assert.ok(buildSystemPrompt("钝角", ["字面误解"], true).includes("严格执行"));
+  assert.ok(buildSystemPrompt("钝角", ["字面误解"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
@@ -176,4 +190,10 @@ test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
   assert.equal(normalizeTopic(42), null);
   assert.equal(normalizeTopic("字".repeat(31)), null);
   assert.equal(normalizeTopic("字".repeat(30)), "字".repeat(30));
+});
+
+test("normalizeGenerationLength defaults invalid values to 正常", () => {
+  assert.equal(normalizeGenerationLength("精辟"), "精辟");
+  assert.equal(normalizeGenerationLength("很长"), "正常");
+  assert.equal(normalizeGenerationLength(undefined), "正常");
 });

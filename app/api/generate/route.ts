@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { normalizeTopic } from "./validation";
+import { normalizeGenerationLength, normalizeTopic, type GenerationLength } from "./validation";
 import { MENTAL_STATE_PROMPTS, buildSystemPrompt, drawMechanismSets } from "./prompts";
 import {
   cleanGeneratedText,
@@ -15,6 +15,18 @@ const fallbackLines = [
   "据不可靠消息，所有认真讨论这件事的人，最后都会被分配到同一个括号里。",
   "如果今天必须得出结论，那结论大概会先去买一杯奶茶再回来。",
 ];
+
+function fallbackForLength(topic: string, generationLength: GenerationLength): string {
+  if (generationLength === "精辟") {
+    const core = Array.from(topic).slice(0, 4).join("");
+    return `${core}先别着急。`;
+  }
+  if (generationLength === "中等") {
+    const core = Array.from(topic).slice(0, 6).join("");
+    return `${core}先别急着下结论，它正排队解释自己。`;
+  }
+  return fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+}
 
 interface SamplingParams {
   temperature: number;
@@ -71,6 +83,7 @@ function acceptCompletion(
   completion: { content: string; finishReason: string },
   topic: string,
   mood: string,
+  generationLength: GenerationLength,
   label: string,
 ): string | null {
   // Only finish_reason "stop" is trustworthy — "length" means truncation.
@@ -79,7 +92,7 @@ function acceptCompletion(
     return null;
   }
   const text = cleanGeneratedText(completion.content);
-  const reason = validateGeneratedText(text, topic, mood);
+  const reason = validateGeneratedText(text, topic, mood, generationLength);
   if (reason) {
     console.warn(`generate ${label}: rejected ${reason}`);
     return null;
@@ -88,19 +101,24 @@ function acceptCompletion(
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => ({}))) as { topic?: unknown; mood?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    topic?: unknown;
+    mood?: unknown;
+    length?: unknown;
+  };
   const topic = normalizeTopic(body.topic);
   if (!topic) return NextResponse.json({ error: "invalid_topic" }, { status: 400 });
   const mood =
     typeof body.mood === "string" && Object.hasOwn(MENTAL_STATE_PROMPTS, body.mood)
       ? body.mood
       : "正常";
+  const generationLength = normalizeGenerationLength(body.length);
 
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
     console.warn("generate: DEEPSEEK_API_KEY is not set — serving a canned fallback line");
     await new Promise((resolve) => setTimeout(resolve, 520));
-    return NextResponse.json({ text: fallbackLines[Math.floor(Math.random() * fallbackLines.length)] });
+    return NextResponse.json({ text: fallbackForLength(topic, generationLength) });
   }
 
   const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
@@ -108,7 +126,13 @@ export async function POST(request: Request) {
 
   const settled = await Promise.allSettled(
     draw.candidates.map((mechanisms, i) =>
-      requestCompletion(endpoint, apiKey, buildSystemPrompt(mood, mechanisms), topic, CANDIDATE_PARAMS[i]),
+      requestCompletion(
+        endpoint,
+        apiKey,
+        buildSystemPrompt(mood, mechanisms, false, generationLength),
+        topic,
+        CANDIDATE_PARAMS[i],
+      ),
     ),
   );
 
@@ -118,7 +142,7 @@ export async function POST(request: Request) {
       console.warn(`generate candidate-${index}: upstream failure`, result.reason);
       return;
     }
-    const text = acceptCompletion(result.value, topic, mood, `candidate-${index}`);
+    const text = acceptCompletion(result.value, topic, mood, generationLength, `candidate-${index}`);
     if (!text) return;
     const similarity = recentSimilarity(topic, mood, text);
     if (similarity > 0.5) {
@@ -131,6 +155,7 @@ export async function POST(request: Request) {
       mood,
       similarity,
       draw.candidates[index],
+      generationLength,
     );
     valid.push({ text, score, topicHit, length, index });
   });
@@ -145,11 +170,11 @@ export async function POST(request: Request) {
       const retry = await requestCompletion(
         endpoint,
         apiKey,
-        buildSystemPrompt(mood, [draw.retry], true),
+        buildSystemPrompt(mood, [draw.retry], true, generationLength),
         topic,
         RETRY_PARAMS,
       );
-      const retryText = acceptCompletion(retry, topic, mood, "retry");
+      const retryText = acceptCompletion(retry, topic, mood, generationLength, "retry");
       if (retryText && recentSimilarity(topic, mood, retryText) <= 0.5) text = retryText;
     } catch (error) {
       console.warn("generate retry: upstream failure", error);

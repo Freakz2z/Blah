@@ -2,11 +2,12 @@
  *
  * Validation rejects broken output outright; scoring only ranks the two
  * surviving candidates against each other. Length is measured in Han
- * characters to match the prompt's 25~65 汉字 contract, and topic characters
+ * characters to match the selected generation-length contract, and topic characters
  * are exempt from charset/han-ratio/leak/cliché rules so a topic like
  * 「奶茶」or「ChatGPT」is never penalized for mentioning itself. */
 
 import { EXEMPLAR_SENTENCES } from "./prompts.ts";
+import { GENERATION_LENGTH_LIMITS, type GenerationLength } from "./validation.ts";
 
 const HAN_RE = /[㐀-䶿一-鿿]/;
 const HAN_ALL_RE = /[㐀-䶿一-鿿]/g;
@@ -124,15 +125,17 @@ export function validateGeneratedText(
   text: string,
   topic: string,
   mood = "正常",
+  generationLength: GenerationLength = "正常",
 ): InvalidReason | null {
   const chars = Array.from(text);
   const length = chars.length;
   const topicChars = new Set(Array.from(topic));
   const hanCount = chars.filter((ch) => HAN_RE.test(ch)).length;
 
-  // The prompt contract is 25~65 汉字 — count Han characters, not codepoints,
-  // so punctuation and Latin topic words can't kill a compliant sentence.
-  if (hanCount < 25 || hanCount > 65) return "length";
+  // Count Han characters, not codepoints, so punctuation and Latin topic words
+  // can't kill a compliant sentence.
+  const { min, max } = GENERATION_LENGTH_LIMITS[generationLength];
+  if (hanCount < min || hanCount > max) return "length";
 
   if (!chars.every((ch) => CHAR_WHITELIST_RE.test(ch) || topicChars.has(ch))) return "charset";
 
@@ -193,6 +196,7 @@ export function scoreGeneratedText(
   mood: string,
   recentSimilarity: number,
   mechanisms: string[] = [],
+  generationLength: GenerationLength = "正常",
 ): CandidateScore {
   const chars = Array.from(text);
   const length = chars.length;
@@ -232,7 +236,9 @@ export function scoreGeneratedText(
   if (punctRatio > 0.25) score -= 10;
   else if (punctRatio === 0) score -= 4;
 
-  if (length >= 32 && length <= 58) score += 6;
+  const hanLength = chars.filter((ch) => HAN_RE.test(ch)).length;
+  const { target } = GENERATION_LENGTH_LIMITS[generationLength];
+  score += Math.max(0, 6 - Math.abs(hanLength - target));
   if (new Set(chars).size / length >= 0.8) score += 4;
 
   if ("，、；：—".includes(chars[length - 1])) score -= 6;
