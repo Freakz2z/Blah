@@ -340,7 +340,7 @@ export default function Home() {
                 value={topic}
                 maxLength={MAX_CHARS + 1}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="例如：疯狂星期四、括号文学、考研…"
+                placeholder="输入选题"
                 autoComplete="off"
                 spellCheck={false}
                 aria-describedby="char-count"

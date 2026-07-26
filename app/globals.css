@@ -376,6 +376,9 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .topic-input::placeholder {
   color: var(--fg-muted);
   font-family: var(--font-sans);
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   font-weight: 400;
 }
 
