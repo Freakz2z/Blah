@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
 const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
 
 async function render() {
@@ -28,64 +25,89 @@ async function render() {
   );
 }
 
-test("server-renders the starter loading skeleton", async () => {
+test("renders the nonsense generator page", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Building your site/);
-  assert.match(html, /Your site is taking shape/);
-  assert.match(
-    html,
-    /Your first version will appear here automatically when it’s ready\./,
-  );
-  assert.doesNotMatch(html, /Codex/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
+
+  // Title and metadata
+  assert.match(html, /<title>胡言乱语生成器<\/title>/i);
+  assert.match(html, /胡言乱语生成器/);
+
+  // Header
+  assert.match(html, /theme-toggle/);
+
+  // Topic input
+  assert.match(html, /<label\s[^>]*for="topic"[^>]*>/i);
+  assert.match(html, /id="topic"/);
+  assert.match(html, /placeholder="例如：疯狂星期四、括号文学、考研/);
+
+  // Char count — RSC wraps text segments with comment markers
+  assert.match(html, /0<!.*?\/.*?30</);
+
+  // Mood slider — 5 states
+  assert.match(html, /role="slider"/);
+  assert.match(html, /aria-valuetext/);
+  assert.match(html, /钝角/);
+  assert.match(html, /最差/);
+  assert.match(html, /极差/);
+  assert.match(html, /差/);
+  assert.match(html, /正常/);
+  assert.match(html, /aria-valuenow="4"/);
+
+  // Mood label
+
+  // Primary button
+  assert.match(html, /开始胡言乱语/);
+
+  // Result section
+  assert.match(html, /等一句没有用的话/);
+
+  // Mood slider track
+  assert.match(html, /mood-track/);
+
+  // No skeleton / AI demo patterns
+  assert.doesNotMatch(html, /react-loading-skeleton/);
+  assert.doesNotMatch(html, /codex-preview/);
+  assert.doesNotMatch(html, /Building your site/);
+  assert.doesNotMatch(html, /AI 驱动/);
+  assert.doesNotMatch(html, /释放你的创造力/);
+  assert.doesNotMatch(html, /释放创造力/);
+  assert.doesNotMatch(html, /探索无限/);
+  assert.doesNotMatch(html, /下一代体验/);
+  assert.doesNotMatch(html, /chatbot/i);
+  assert.doesNotMatch(html, /chat-bubble/i);
 });
 
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
+test("keeps the preview skeleton scoped and disposable", async () => {
+  const [preview, css, page, layout] = await Promise.all([
+    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8").catch(() => null),
+    readFile(new URL("preview.css", previewRoot), "utf8").catch(() => null),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
   ]);
 
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
+  // Page is the real app, not a skeleton
+  assert.match(page, /胡言乱语生成器/);
+  assert.match(page, /"use client"/);
+  assert.doesNotMatch(page, /SkeletonPreview/);
 
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
-  );
+  // Layout is clean — no skeleton references
+  assert.match(layout, /胡言乱语生成器/);
+  assert.doesNotMatch(layout, /_sites-preview/);
+  assert.doesNotMatch(layout, /react-loading-skeleton/);
+  assert.doesNotMatch(layout, /Viewport/);
 
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
-
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
-  );
+  // Global CSS is custom, not tailwind-only
+  const cssContent = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(cssContent, /胡言乱语/);
+  assert.match(cssContent, /\.app-shell/);
+  assert.match(cssContent, /\.mood-/);
+  assert.match(cssContent, /\.result-section/);
+  assert.match(cssContent, /\.primary-button/);
+  assert.match(cssContent, /\.mood-track/);
+  assert.match(cssContent, /prefers-reduced-motion/);
+  assert.match(cssContent, /prefers-color-scheme:\s*dark/);
 });

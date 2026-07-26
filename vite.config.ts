@@ -29,8 +29,12 @@ const localBindingConfig = {
           binding: r2,
           bucket_name: "site-creator-r2",
         },
-      ]
+    ]
     : [],
+  durable_objects: {
+    bindings: [{ name: "RATE_LIMITER", class_name: "RateLimiter" }],
+  },
+  migrations: [{ tag: "rate-limiter-v1", new_sqlite_classes: ["RateLimiter"] }],
 };
 
 export default defineConfig(async () => {

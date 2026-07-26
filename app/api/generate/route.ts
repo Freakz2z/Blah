@@ -19,6 +19,45 @@ const MENTAL_STATE_PROMPTS: Record<string, string> = {
   钝角: "当前状态是【钝角】：这不是更随机，而是认真理解错了方向。句法完整，逻辑基本可读但方向错误，语义跨度中高，话题跳跃一至两次，字面误解极强，反应迟钝、笨拙、慢半拍；语气诚恳、木讷、过度认真。优先把比喻当物理事实、把网络用语当操作说明、把抽象概念当可测量/携带/维修的物体，或回答邻近但不是原问题的问题；用朴素推理得出低烈度但明显不对的结论。不要高速跳跃、精神崩溃、大量疯狂意象、故意装疯、普通冷笑话或直接写出“钝角”。",
 };
 
+const MIN_OUTPUT_LENGTH = 25;
+const MAX_OUTPUT_LENGTH = 65;
+
+function cleanGeneratedText(value: string | undefined) {
+  return value?.replace(/[\r\n"“”]/g, "").trim() ?? "";
+}
+
+function isValidGeneratedText(text: string) {
+  const length = Array.from(text).length;
+  return length >= MIN_OUTPUT_LENGTH && length <= MAX_OUTPUT_LENGTH;
+}
+
+async function requestCompletion(
+  endpoint: string,
+  apiKey: string,
+  systemPrompt: string,
+  topic: string,
+) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
+      thinking: { type: "disabled" },
+      temperature: 1.35,
+      max_tokens: 100,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `选题：${topic}` },
+      ],
+    }),
+    signal: AbortSignal.timeout(12000),
+  });
+
+  if (!response.ok) throw new Error("upstream");
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return cleanGeneratedText(data.choices?.[0]?.message?.content);
+}
+
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { topic?: string; mood?: string };
   const topic = body.topic?.trim();
@@ -32,24 +71,23 @@ export async function POST(request: Request) {
   }
 
   const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
-      thinking: { type: "disabled" },
-      temperature: 1.35,
-      max_tokens: 100,
-      messages: [
-        { role: "system", content: `${COMMON_PROMPT}\n\n${MENTAL_STATE_PROMPTS[mentalState]}` },
-        { role: "user", content: `选题：${topic}` },
-      ],
-    }),
-    signal: AbortSignal.timeout(12000),
-  });
-  if (!response.ok) return NextResponse.json({ error: "upstream" }, { status: 502 });
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const text = data.choices?.[0]?.message?.content?.replace(/[\r\n"“”]/g, "").trim();
-  if (!text) return NextResponse.json({ error: "empty" }, { status: 502 });
-  return NextResponse.json({ text });
+  const systemPrompt = `${COMMON_PROMPT}\n\n${MENTAL_STATE_PROMPTS[mentalState]}`;
+
+  try {
+    let text = await requestCompletion(endpoint, apiKey, systemPrompt, topic);
+    if (!isValidGeneratedText(text)) {
+      text = await requestCompletion(
+        endpoint,
+        apiKey,
+        `${systemPrompt}\n\n严格执行：这次必须只输出25到65个字符的一句中文，不要解释。`,
+        topic,
+      );
+    }
+    if (!isValidGeneratedText(text)) {
+      return NextResponse.json({ error: "length_invalid" }, { status: 502 });
+    }
+    return NextResponse.json({ text });
+  } catch {
+    return NextResponse.json({ error: "upstream" }, { status: 502 });
+  }
 }
