@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 /* ── Constants ─────────────────────────────────── */
 const MOODS = ["钝角", "最差", "极差", "差", "正常"];
@@ -50,13 +50,6 @@ export default function Home() {
     );
     return () => window.clearInterval(timer);
   }, [status]);
-
-  /* Web Share availability — false during SSR/hydration, real value after */
-  const canShare = useSyncExternalStore(
-    subscribeNoop,
-    () => !!navigator.share,
-    () => false,
-  );
 
   /* feedback timer cleanup */
   useEffect(
@@ -291,19 +284,6 @@ export default function Home() {
     finish("saved");
   }, [result, saveState, topic, mood]);
 
-  /* ── Share — mobile only, with attribution ───── */
-  const shareResult = useCallback(async () => {
-    if (!result) return;
-    try {
-      await navigator.share({
-        text: `${result}\n——「${topic.trim()}」·精神状态：${MOODS[mood]}`,
-        url: location.href,
-      });
-    } catch {
-      /* AbortError — user dismissed the sheet */
-    }
-  }, [result, topic, mood]);
-
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
   const canGenerate = status !== "thinking";
@@ -531,15 +511,6 @@ export default function Home() {
                           ? "保存失败"
                           : "保存图片"}
                   </button>
-                  {canShare && (
-                    <button
-                      type="button"
-                      disabled={status === "thinking"}
-                      onClick={shareResult}
-                    >
-                      分享
-                    </button>
-                  )}
                 </div>
               </>
             )}
@@ -550,9 +521,6 @@ export default function Home() {
   );
 }
 
-function subscribeNoop() {
-  return () => {};
-}
 
 /* ── Canvas text wrapping helper ──────────────── */
 function wrapText(
