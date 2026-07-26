@@ -60,10 +60,7 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /role="radiogroup"/);
   assert.match(html, /role="radio"/);
   assert.match(html, /精辟/);
-  assert.match(html, /4–8字/);
   assert.match(html, /中等/);
-  assert.match(html, /12–24字/);
-  assert.match(html, /25–65字/);
 
   // Mood label
 

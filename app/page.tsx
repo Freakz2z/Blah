@@ -4,11 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 /* ── Constants ─────────────────────────────────── */
 const MOODS = ["钝角", "最差", "极差", "差", "正常"];
-const LENGTH_OPTIONS = [
-  { value: "精辟", range: "4–8字" },
-  { value: "中等", range: "12–24字" },
-  { value: "正常", range: "25–65字" },
-] as const;
+const LENGTH_OPTIONS = ["精辟", "中等", "正常"] as const;
 const THINKING_STEPS = [
   "正在理解选题",
   "正在建立不必要的联系",
@@ -26,7 +22,7 @@ const CANVAS_SANS =
 export default function Home() {
   const [topic, setTopic] = useState("");
   const [mood, setMood] = useState(4); /* "正常" — last index */
-  const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]["value"]>("正常");
+  const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]>("正常");
   const [result, setResult] = useState("");
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
   const [thinkingStep, setThinkingStep] = useState(0);
@@ -420,7 +416,7 @@ export default function Home() {
           <fieldset className="length-block" disabled={status === "thinking"}>
             <legend className="micro-label">生成长度</legend>
             <div className="length-options" role="radiogroup" aria-label="生成长度">
-              {LENGTH_OPTIONS.map(({ value, range }, index) => (
+              {LENGTH_OPTIONS.map((value, index) => (
                 <button
                   key={value}
                   type="button"
@@ -443,8 +439,7 @@ export default function Home() {
                     options?.[nextIndex]?.focus();
                   }}
                 >
-                  <span>{value}</span>
-                  <small>{range}</small>
+                  {value}
                 </button>
               ))}
             </div>

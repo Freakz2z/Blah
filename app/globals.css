@@ -520,9 +520,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   position: relative;
   min-height: 44px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
   color: var(--fg-muted);
   font-family: var(--font-sans);
   font-size: 13px;
@@ -531,7 +530,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 }
 
 .length-option + .length-option { border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); }
-.length-option small { font-size: 11px; letter-spacing: 0; }
 .length-option::after {
   content: "";
   position: absolute;
