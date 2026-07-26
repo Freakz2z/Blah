@@ -77,6 +77,12 @@ npm run lint        # 代码检查
 - `quality.ts`：结果清洗、校验、评分和近似重复检测。
 - `validation.ts`：选题输入校验。
 
+## 字体
+
+页面衬线字体为自托管的 [Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC)（SIL OFL 1.1），
+经 [cn-font-split](https://www.npmjs.com/package/cn-font-split) 按 unicode-range 切片存放在
+`public/fonts/`，浏览器只按页面实际用到的字形下载切片，保证各平台渲染一致。
+
 ## 参与改进
 
 欢迎提交 Issue 或 Pull Request。比起“更疯”，我们更想让每一档精神状态都更有自己的一套歪理。
