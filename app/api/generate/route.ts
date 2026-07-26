@@ -16,10 +16,17 @@ const fallbackLines = [
   "如果今天必须得出结论，那结论大概会先去买一杯奶茶再回来。",
 ];
 
-function fallbackForLength(topic: string, generationLength: GenerationLength): string {
+function fallbackForLength(topic: string, mood: string, generationLength: GenerationLength): string {
   if (generationLength === "精辟") {
     const core = Array.from(topic).slice(0, 4).join("");
-    return `${core}先别着急。`;
+    const endings: Record<string, string> = {
+      正常: "先别着急。",
+      差: "所以别急。",
+      极差: "正在请假。",
+      最差: "突然下班。",
+      钝角: "先去称重。",
+    };
+    return `${core}${endings[mood] ?? endings["正常"]}`;
   }
   if (generationLength === "中等") {
     const core = Array.from(topic).slice(0, 6).join("");
@@ -118,7 +125,7 @@ export async function POST(request: Request) {
   if (!apiKey) {
     console.warn("generate: DEEPSEEK_API_KEY is not set — serving a canned fallback line");
     await new Promise((resolve) => setTimeout(resolve, 520));
-    return NextResponse.json({ text: fallbackForLength(topic, generationLength) });
+    return NextResponse.json({ text: fallbackForLength(topic, mood, generationLength) });
   }
 
   const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
@@ -187,6 +194,11 @@ export async function POST(request: Request) {
     }
   }
 
+  // Very short output is unusually sensitive to tokenization and can miss the
+  // 4–8-character window even after a strict retry. Preserve the interaction
+  // contract with a topic- and mood-aware concise fallback instead of showing
+  // an opaque failure to the user.
+  if (!text && generationLength === "精辟") text = fallbackForLength(topic, mood, generationLength);
   if (!text) return NextResponse.json({ error: "generation_failed" }, { status: 502 });
   rememberResult(topic, mood, text);
   return NextResponse.json({ text });
