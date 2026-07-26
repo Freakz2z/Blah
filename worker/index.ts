@@ -5,7 +5,6 @@ import { normalizeTopic } from "../app/api/generate/validation";
 
 interface Env {
   ASSETS: Fetcher;
-  DB: D1Database;
   RATE_LIMITER: DurableObjectNamespace;
   IMAGES: {
     input(stream: ReadableStream): {
