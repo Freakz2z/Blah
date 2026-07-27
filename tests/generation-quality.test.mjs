@@ -27,6 +27,7 @@ import {
   normalizeGenerationMode,
   normalizeTopic,
 } from "../app/api/generate/validation.ts";
+import { fallbackForLength } from "../app/api/generate/fallback.ts";
 
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
@@ -208,4 +209,23 @@ test("normalizeGenerationMode accepts two modes and defaults invalid values to �
   assert.equal(normalizeGenerationMode("回答"), "回答");
   assert.equal(normalizeGenerationMode("聊天"), "翻译");
   assert.equal(normalizeGenerationMode(undefined), "翻译");
+});
+
+test("every mode and length has a valid fallback sentence", () => {
+  const topics = {
+    翻译: "我今天不想上班",
+    回答: "为什么周一总是来得很快？",
+  };
+  for (const mode of ["翻译", "回答"]) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topics[mode], "正常", length, mode);
+      assert.equal(
+        validateGeneratedText(text, topics[mode], "正常", length),
+        null,
+        `${mode}/${length}: ${text}`,
+      );
+    }
+  }
+  assert.match(fallbackForLength(topics["翻译"], "正常", "中等", "翻译"), /我今天不想上班/);
+  assert.doesNotMatch(fallbackForLength(topics["回答"], "正常", "正常", "回答"), /^为什么/);
 });
