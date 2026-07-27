@@ -13,7 +13,7 @@ export type GenerationLength = (typeof GENERATION_LENGTHS)[number];
 export const GENERATION_LENGTH_LIMITS: Record<GenerationLength, { min: number; max: number; target: number }> = {
   精辟: { min: 4, max: 8, target: 6 },
   中等: { min: 12, max: 24, target: 18 },
-  正常: { min: 25, max: 65, target: 45 },
+  正常: { min: 25, max: 48, target: 36 },
 };
 
 export function normalizeTopic(value: unknown): string | null {

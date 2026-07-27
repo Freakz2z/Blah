@@ -7,6 +7,7 @@ import {
   cleanGeneratedText,
   validateGeneratedText,
   scoreGeneratedText,
+  modeFidelityScore,
   recentSimilarity,
   rememberResult,
 } from "../app/api/generate/quality.ts";
@@ -67,7 +68,7 @@ test("validateGeneratedText accepts a well-formed sentence", () => {
 
 test("validateGeneratedText rejects out-of-range lengths", () => {
   assert.equal(validateGeneratedText("太短了。", "考研"), "length");
-  assert.equal(validateGeneratedText("很".repeat(66), "考研"), "length");
+  assert.equal(validateGeneratedText("很".repeat(49), "考研"), "length");
 });
 
 test("validateGeneratedText applies the selected generation-length contract", () => {
@@ -104,7 +105,7 @@ test("length contract counts Han characters, so Latin topics stay viable", () =>
 
 test("unit symbols like ℃ pass the charset whitelist", () => {
   const units = "体温到了38.5℃我还是要去自习室，因为老师说知识点在40℃的时候溶解得最快。";
-  assert.equal(validateGeneratedText(units, "考研"), null);
+  assert.equal(validateGeneratedText(units, "体温38.5℃"), null);
 });
 
 test("removed mood names remain valid ordinary topic vocabulary", () => {
@@ -168,25 +169,28 @@ test("drawMechanismSets keeps candidates disjoint and inside the tier whitelist"
   for (const mood of Object.keys(TIER_MECHANISMS)) {
     for (let i = 0; i < 50; i++) {
       const draw = drawMechanismSets(mood);
-      const [a, b] = draw.candidates;
-      const all = [...a, ...b, draw.retry];
+      const [a, b, c] = draw.candidates;
+      const all = [...a, ...b, ...c, draw.retry];
       for (const name of all) assert.ok(TIER_MECHANISMS[mood].includes(name));
       for (const name of a) assert.ok(!b.includes(name), "candidates must be disjoint");
+      for (const name of a) assert.ok(!c.includes(name), "candidates must be disjoint");
+      for (const name of b) assert.ok(!c.includes(name), "candidates must be disjoint");
     }
   }
 });
 
 test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts", () => {
-  const prompt = buildSystemPrompt("极差", ["抽象实体化"], false, "正常", "回答");
+  const prompt = buildSystemPrompt("极差", ["情绪实体化"], false, "正常", "回答");
   assert.ok(prompt.startsWith(COMMON_PROMPT));
   assert.ok(prompt.includes(MODE_PROMPTS["回答"]));
   assert.ok(!prompt.includes(MODE_PROMPTS["翻译"]));
   assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["极差"]));
-  assert.ok(prompt.includes(MECHANISM_HINTS["抽象实体化"]));
+  assert.ok(prompt.includes(MECHANISM_HINTS["情绪实体化"]));
+  assert.match(prompt, /问题「为什么周一来得这么快」/);
   assert.ok(!prompt.includes("严格执行"));
-  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], true).includes("严格执行"));
-  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
-  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
+  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], true).includes("严格执行"));
+  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
+  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
@@ -220,7 +224,7 @@ test("every mode and length has a valid fallback sentence", () => {
     for (const length of ["精辟", "中等", "正常"]) {
       const text = fallbackForLength(topics[mode], "正常", length, mode);
       assert.equal(
-        validateGeneratedText(text, topics[mode], "正常", length),
+        validateGeneratedText(text, topics[mode], "正常", length, mode),
         null,
         `${mode}/${length}: ${text}`,
       );
@@ -228,4 +232,40 @@ test("every mode and length has a valid fallback sentence", () => {
   }
   assert.match(fallbackForLength(topics["翻译"], "正常", "中等", "翻译"), /我今天不想上班/);
   assert.doesNotMatch(fallbackForLength(topics["回答"], "正常", "正常", "回答"), /^为什么/);
+});
+
+test("normal translation fallback joins after source punctuation cleanly", () => {
+  const text = fallbackForLength("外面下雨了，我忘记带伞。", "极差", "正常", "翻译");
+  assert.equal(text.includes("。，"), false);
+  assert.equal(text.startsWith("外面下雨了，我忘记带伞，"), true);
+});
+
+test("translation fidelity preserves negation and contrast", () => {
+  const topic = "我今天不想上班，但还是准时到了公司";
+  const faithful = "我今天不想上班，但身体为了全勤还是准时把我送到了公司。";
+  const drifted = "公司今天召开临时会议，工位决定替所有员工完成一整天的正常工作。";
+  const changedFact = "我今天不想上班，但闹钟替我办了迟到手续，公司只好把工位寄回家。";
+  assert.equal(validateGeneratedText(faithful, topic, "正常", "正常", "翻译"), null);
+  assert.equal(validateGeneratedText(drifted, topic, "正常", "正常", "翻译"), "mode");
+  assert.equal(validateGeneratedText(changedFact, topic, "正常", "正常", "翻译"), "mode");
+  assert.ok(modeFidelityScore(faithful, topic, "翻译") > modeFidelityScore(drifted, topic, "翻译") + 30);
+});
+
+test("answer mode rewards direct relevance and rejects question repetition", () => {
+  const topic = "为什么周一总是来得这么快？";
+  const answer = "因为周末一直舍不得下班，周一只好提前进场把它从日历上请走。";
+  const repeated = "为什么周一总是来得这么快其实就是问题本身，答案决定继续保持沉默。";
+  assert.equal(validateGeneratedText(answer, topic, "正常", "正常", "回答"), null);
+  assert.equal(validateGeneratedText(repeated, topic, "正常", "正常", "回答"), "mode");
+  assert.ok(modeFidelityScore(answer, topic, "回答") > modeFidelityScore(repeated, topic, "回答"));
+});
+
+test("scoring penalizes bureaucratic and numeric filler", () => {
+  const topic = "为什么周一来得快";
+  const clean = "因为周末还在赖床，周一只好提前到门口替它按响闹钟。";
+  const bloated = "根据第七条正式规定，周一按百分之三点七的流程提前完成年检。";
+  const cleanScore = scoreGeneratedText(clean, topic, "正常", 0, ["错误因果"], "正常", "回答");
+  const bloatedScore = scoreGeneratedText(bloated, topic, "正常", 0, ["错误因果"], "正常", "回答");
+  assert.ok(cleanScore.score > bloatedScore.score);
+  assert.equal(validateGeneratedText(bloated, topic, "正常", "正常", "回答"), "style");
 });

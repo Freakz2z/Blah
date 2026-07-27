@@ -23,13 +23,27 @@ interface SamplingParams {
   timeoutMs: number;
 }
 
-// Dual temperatures pull the two candidates apart stylistically (mean ≈ 1.35);
-// top_p trims the garbage tail that high temperature would otherwise sample.
-const CANDIDATE_PARAMS: [SamplingParams, SamplingParams] = [
-  { temperature: 1.25, topP: 0.95, maxTokens: 100, timeoutMs: 12_000 },
-  { temperature: 1.45, topP: 0.95, maxTokens: 100, timeoutMs: 12_000 },
-];
-const RETRY_PARAMS: SamplingParams = { temperature: 1.0, topP: 0.9, maxTokens: 90, timeoutMs: 10_000 };
+// Three moderate-temperature candidates create useful variety without pushing
+// the model into the word-salad tail that high temperatures produced.
+const CANDIDATE_PARAMS: Record<
+  GenerationMode,
+  [SamplingParams, SamplingParams, SamplingParams]
+> = {
+  翻译: [
+    { temperature: 0.55, topP: 0.78, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 0.85, topP: 0.86, maxTokens: 100, timeoutMs: 12_000 },
+  ],
+  回答: [
+    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 0.9, topP: 0.88, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 1.05, topP: 0.92, maxTokens: 100, timeoutMs: 12_000 },
+  ],
+};
+const RETRY_PARAMS: Record<GenerationMode, SamplingParams> = {
+  翻译: { temperature: 0.45, topP: 0.75, maxTokens: 90, timeoutMs: 10_000 },
+  回答: { temperature: 0.65, topP: 0.8, maxTokens: 90, timeoutMs: 10_000 },
+};
 
 async function requestCompletion(
   endpoint: string,
@@ -47,7 +61,7 @@ async function requestCompletion(
       thinking: { type: "disabled" },
       temperature: params.temperature,
       top_p: params.topP,
-      frequency_penalty: 0.3,
+      frequency_penalty: 0.15,
       max_tokens: params.maxTokens,
       stop: ["\n"],
       messages: [
@@ -73,6 +87,7 @@ function acceptCompletion(
   topic: string,
   mood: string,
   generationLength: GenerationLength,
+  mode: GenerationMode,
   label: string,
 ): string | null {
   // Only finish_reason "stop" is trustworthy — "length" means truncation.
@@ -81,7 +96,7 @@ function acceptCompletion(
     return null;
   }
   const text = cleanGeneratedText(completion.content);
-  const reason = validateGeneratedText(text, topic, mood, generationLength);
+  const reason = validateGeneratedText(text, topic, mood, generationLength, mode);
   if (reason) {
     console.warn(`generate ${label}: rejected ${reason}`);
     return null;
@@ -118,9 +133,7 @@ export async function POST(request: Request) {
   // Short and medium sentences cannot faithfully carry two mechanisms.
   // Keeping one preserves a clear absurd turn instead of forcing candidates
   // over the selected length limit.
-  const candidateMechanisms: [string[], string[]] = generationLength !== "正常"
-    ? [[draw.candidates[0][0]], [draw.candidates[1][0]]]
-    : draw.candidates;
+  const candidateMechanisms = draw.candidates;
 
   const settled = await Promise.allSettled(
     candidateMechanisms.map((mechanisms, i) =>
@@ -130,7 +143,7 @@ export async function POST(request: Request) {
         buildSystemPrompt(mood, mechanisms, false, generationLength, mode),
         topic,
         mode,
-        CANDIDATE_PARAMS[i],
+        CANDIDATE_PARAMS[mode][i],
       ),
     ),
   );
@@ -141,7 +154,7 @@ export async function POST(request: Request) {
       console.warn(`generate candidate-${index}: upstream failure`, result.reason);
       return;
     }
-    const text = acceptCompletion(result.value, topic, mood, generationLength, `candidate-${index}`);
+    const text = acceptCompletion(result.value, topic, mood, generationLength, mode, `candidate-${index}`);
     if (!text) return;
     const similarity = recentSimilarity(historyTopic, mood, text);
     if (similarity > 0.5) {
@@ -155,6 +168,7 @@ export async function POST(request: Request) {
       similarity,
       candidateMechanisms[index],
       generationLength,
+      mode,
     );
     valid.push({ text, score, topicHit, length, index });
   });
@@ -172,9 +186,9 @@ export async function POST(request: Request) {
         buildSystemPrompt(mood, [draw.retry], true, generationLength, mode),
         topic,
         mode,
-        RETRY_PARAMS,
+        RETRY_PARAMS[mode],
       );
-      const retryText = acceptCompletion(retry, topic, mood, generationLength, "retry");
+      const retryText = acceptCompletion(retry, topic, mood, generationLength, mode, "retry");
       if (retryText && recentSimilarity(historyTopic, mood, retryText) <= 0.5) text = retryText;
     } catch (error) {
       console.warn("generate retry: upstream failure", error);
