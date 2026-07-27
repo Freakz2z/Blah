@@ -65,6 +65,11 @@ Content-Type: application/json
 
 ## 开发与测试
 
+生产环境默认使用 Ollama Cloud 的 `deepseek-v4-flash`。将 API Key 保存为
+Cloudflare Secret `OLLAMA_API_KEY`；可用 `OLLAMA_MODEL` 覆盖模型名，
+或将 `MODEL_PROVIDER` 设为 `deepseek` 临时切回原供应商。新密钥尚未配置时，
+服务会自动使用已有的 `DEEPSEEK_API_KEY`，避免生成接口中断。
+
 ```bash
 npm run dev         # 本地开发
 npm run build       # 生产构建

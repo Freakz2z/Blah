@@ -15,13 +15,11 @@ import {
   rememberResult,
 } from "./quality";
 import { fallbackForLength } from "./fallback";
-
-interface SamplingParams {
-  temperature: number;
-  topP: number;
-  maxTokens: number;
-  timeoutMs: number;
-}
+import {
+  requestCompletion,
+  resolveProviderConfig,
+  type SamplingParams,
+} from "./provider";
 
 // Three moderate-temperature candidates create useful variety without pushing
 // the model into the word-salad tail that high temperatures produced.
@@ -44,43 +42,6 @@ const RETRY_PARAMS: Record<GenerationMode, SamplingParams> = {
   翻译: { temperature: 0.45, topP: 0.75, maxTokens: 90, timeoutMs: 10_000 },
   回答: { temperature: 0.65, topP: 0.8, maxTokens: 90, timeoutMs: 10_000 },
 };
-
-async function requestCompletion(
-  endpoint: string,
-  apiKey: string,
-  systemPrompt: string,
-  topic: string,
-  mode: GenerationMode,
-  params: SamplingParams,
-): Promise<{ content: string; finishReason: string }> {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash",
-      thinking: { type: "disabled" },
-      temperature: params.temperature,
-      top_p: params.topP,
-      frequency_penalty: 0.15,
-      max_tokens: params.maxTokens,
-      stop: ["\n"],
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `模式：${mode}\n输入：${topic}` },
-      ],
-    }),
-    signal: AbortSignal.timeout(params.timeoutMs),
-  });
-
-  if (!response.ok) throw new Error(`upstream_${response.status}`);
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
-  };
-  return {
-    content: data.choices?.[0]?.message?.content ?? "",
-    finishReason: data.choices?.[0]?.finish_reason ?? "",
-  };
-}
 
 function acceptCompletion(
   completion: { content: string; finishReason: string },
@@ -121,14 +82,17 @@ export async function POST(request: Request) {
   const mode = normalizeGenerationMode(body.mode);
   const historyTopic = `${mode}：${topic}`;
 
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) {
-    console.warn("generate: DEEPSEEK_API_KEY is not set — serving a canned fallback line");
+  const provider = resolveProviderConfig();
+  if (!provider) {
+    console.warn("generate: no model API key is set — serving a canned fallback line");
     await new Promise((resolve) => setTimeout(resolve, 520));
     return NextResponse.json({ text: fallbackForLength(topic, mood, generationLength, mode) });
   }
-
-  const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
+  if (provider.provider !== provider.requestedProvider) {
+    console.warn(
+      `generate: ${provider.requestedProvider} unavailable — falling back to ${provider.provider}`,
+    );
+  }
   const draw = drawMechanismSets(mood);
   // Short and medium sentences cannot faithfully carry two mechanisms.
   // Keeping one preserves a clear absurd turn instead of forcing candidates
@@ -138,8 +102,7 @@ export async function POST(request: Request) {
   const settled = await Promise.allSettled(
     candidateMechanisms.map((mechanisms, i) =>
       requestCompletion(
-        endpoint,
-        apiKey,
+        provider,
         buildSystemPrompt(mood, mechanisms, false, generationLength, mode),
         topic,
         mode,
@@ -181,8 +144,7 @@ export async function POST(request: Request) {
   if (!text) {
     try {
       const retry = await requestCompletion(
-        endpoint,
-        apiKey,
+        provider,
         buildSystemPrompt(mood, [draw.retry], true, generationLength, mode),
         topic,
         mode,

@@ -29,6 +29,11 @@ import {
   normalizeTopic,
 } from "../app/api/generate/validation.ts";
 import { fallbackForLength } from "../app/api/generate/fallback.ts";
+import {
+  buildProviderPayload,
+  parseProviderResponse,
+  resolveProviderConfig,
+} from "../app/api/generate/provider.ts";
 
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
@@ -268,4 +273,65 @@ test("scoring penalizes bureaucratic and numeric filler", () => {
   const bloatedScore = scoreGeneratedText(bloated, topic, "正常", 0, ["错误因果"], "正常", "回答");
   assert.ok(cleanScore.score > bloatedScore.score);
   assert.equal(validateGeneratedText(bloated, topic, "正常", "正常", "回答"), "style");
+});
+
+test("Ollama Cloud is preferred with the same deepseek-v4-flash model", () => {
+  const config = resolveProviderConfig({
+    OLLAMA_API_KEY: "ollama-test-key",
+    DEEPSEEK_API_KEY: "deepseek-test-key",
+  });
+  assert.deepEqual(config, {
+    provider: "ollama",
+    requestedProvider: "ollama",
+    endpoint: "https://ollama.com/api/chat",
+    apiKey: "ollama-test-key",
+    model: "deepseek-v4-flash",
+  });
+});
+
+test("provider resolution keeps DeepSeek as a safe temporary fallback", () => {
+  const config = resolveProviderConfig({ DEEPSEEK_API_KEY: "deepseek-test-key" });
+  assert.equal(config.provider, "deepseek");
+  assert.equal(config.requestedProvider, "ollama");
+  assert.equal(resolveProviderConfig({}), null);
+});
+
+test("Ollama payload and response use the native cloud API contract", () => {
+  const payload = buildProviderPayload(
+    { provider: "ollama", model: "deepseek-v4-flash" },
+    "system prompt",
+    "今天不想上班",
+    "翻译",
+    { temperature: 0.55, topP: 0.78, maxTokens: 100, timeoutMs: 12_000 },
+  );
+  assert.equal(payload.model, "deepseek-v4-flash");
+  assert.equal(payload.stream, false);
+  assert.equal(payload.think, false);
+  assert.deepEqual(payload.options, {
+    temperature: 0.55,
+    top_p: 0.78,
+    num_predict: 100,
+    stop: ["\n"],
+  });
+  assert.deepEqual(
+    parseProviderResponse("ollama", {
+      message: { content: "生成结果。" },
+      done: true,
+      done_reason: "stop",
+    }),
+    { content: "生成结果。", finishReason: "stop" },
+  );
+});
+
+test("DeepSeek payload remains available for rollback", () => {
+  const payload = buildProviderPayload(
+    { provider: "deepseek", model: "deepseek-v4-flash" },
+    "system prompt",
+    "今天不想上班",
+    "回答",
+    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
+  );
+  assert.deepEqual(payload.thinking, { type: "disabled" });
+  assert.equal(payload.max_tokens, 100);
+  assert.equal(payload.frequency_penalty, 0.15);
 });
