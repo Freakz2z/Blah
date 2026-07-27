@@ -1,24 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
   <title id="title">胡言乱语生成器</title>
-  <desc id="desc">翻译原话，或者用胡言乱语回答问题。</desc>
+  <desc id="desc">网站与 Agent 共用一份 Skill，让胡话先听懂输入，再故意讲歪。</desc>
   <rect width="1200" height="360" rx="28" fill="#f9f8f6"/>
   <path d="M64 52H1136" stroke="#171613" stroke-width="2" opacity=".12"/>
-  <text x="64" y="104" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" letter-spacing="3">两种模式 / 三档状态 / 一句废话</text>
+  <text x="64" y="104" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" letter-spacing="3">完整 SKILL / 两种模式 / 三档状态</text>
   <text x="64" y="184" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="68" font-weight="700">胡言乱语生成器</text>
-  <text x="68" y="226" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="25">翻译你的话，或者认真回答它。</text>
+  <text x="68" y="226" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="25">让胡话先听懂你，再故意讲歪。</text>
   <path d="M68 262H177" stroke="#c0392b" stroke-width="5"/>
   <g transform="translate(710 65)">
     <rect width="426" height="230" rx="18" fill="#f1efea" stroke="#171613" stroke-width="2"/>
-    <text x="30" y="45" fill="#9a948a" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18">回答 / 为什么周一来得快</text>
+    <text x="30" y="45" fill="#9a948a" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18">翻译 / 我很困，但还是起床上班了</text>
     <path d="M30 78H396" stroke="#171613" stroke-width="2" opacity=".14"/>
     <g transform="translate(30 106)">
-      <circle cx="0" cy="0" r="9" fill="#171613"/>
+      <circle cx="0" cy="0" r="12" fill="#c0392b"/>
       <circle cx="176" cy="0" r="9" fill="#171613"/>
-      <circle cx="352" cy="0" r="12" fill="#c0392b"/>
+      <circle cx="352" cy="0" r="9" fill="#171613"/>
       <path d="M0 0H352" stroke="#171613" stroke-width="2" opacity=".18"/>
-      <text x="-10" y="38" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">极差</text>
-      <text x="320" y="38" fill="#171613" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17" font-weight="700">正常</text>
+      <text x="-10" y="38" fill="#171613" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17" font-weight="700">正常</text>
+      <text x="168" y="38" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">差</text>
+      <text x="335" y="38" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">极差</text>
     </g>
-    <text x="30" y="188" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="20" font-weight="700">“因为周一办了加急，周末还在补材料。”</text>
+    <text x="30" y="184" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="19" font-weight="700">我虽然困得很有原则，但身体为了全勤</text>
+    <text x="30" y="214" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="19" font-weight="700">还是擅自把我送到了工位。</text>
   </g>
 </svg>

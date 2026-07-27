@@ -9,9 +9,22 @@ function answerSubject(topic: string): string {
 }
 
 function sentenceFragment(value: string, maxLength: number): string {
-  return Array.from(value.replace(/[，。！？、；：,.!?;:]+$/u, "").trim())
+  return Array.from(
+    value
+      .replace(/[。！？.!?]+/gu, "，")
+      .replace(/[，、；：,;:]+$/u, "")
+      .replace(/[，,]{2,}/gu, "，")
+      .trim(),
+  )
     .slice(0, maxLength)
     .join("");
+}
+
+function answerKind(topic: string): "why" | "how" | "whether" | "other" {
+  if (/为什么|为何/.test(topic)) return "why";
+  if (/怎么|怎样|如何|怎么办/.test(topic)) return "how";
+  if (/能不能|可不可以|是不是|是否/.test(topic)) return "whether";
+  return "other";
 }
 
 export function fallbackForLength(
@@ -39,22 +52,40 @@ export function fallbackForLength(
     return `${core}${endings[mode][mood] ?? endings[mode]["正常"]}`;
   }
   if (generationLength === "中等") {
-    const core = Array.from(mode === "翻译" ? topic : answerSubject(topic))
-      .slice(0, mode === "翻译" ? 12 : 6)
-      .join("");
-    return mode === "翻译"
-      ? `原话里的${core}正在排队解释自己。`
-      : `${core}是因为时间给它办了加急。`;
+    if (mode === "翻译") {
+      const core = sentenceFragment(topic, 12);
+      const endings: Record<string, string> = {
+        正常: "，只是理由还没睡醒。",
+        差: "，因为借口临时失踪了。",
+        极差: "，结果借口反过来指挥我。",
+      };
+      return `${core}${endings[mood] ?? endings["正常"]}`;
+    }
+    const subject = sentenceFragment(answerSubject(topic), 10);
+    const answers = {
+      why: `${subject}，时间偷偷走了近路。`,
+      how: `先让${subject}自己示范一遍。`,
+      whether: `可以，${subject}先替你承担后果。`,
+      other: `${subject}，日历昨晚已经答应了。`,
+    };
+    return answers[answerKind(topic)];
   }
   if (mode === "翻译") {
     const core = sentenceFragment(topic, 18);
     const endings: Record<string, string> = {
-      正常: "，只是这句话把逻辑落在家里，事情本身还是照常发生了。",
-      差: "，因为理由先跑去躲雨，事情只能自己把结局说完。",
-      极差: "，结果逻辑忘了带伞，事实只好淋着雨把自己送到终点。",
+      正常: "，只是理由今天比事情晚到了半步，结局只好先照常发生。",
+      差: "，因为借口先把正常原因藏进了口袋最深处。",
+      极差: "，结果借口突然站起来，当场接管了整个现场。",
     };
     return `${core}${endings[mood] ?? endings["正常"]}`;
   }
 
-  return `${sentenceFragment(answerSubject(topic), 16)}，因为日历怕它迟到，昨晚就偷偷把出发时间改早了整整一天。`;
+  const subject = sentenceFragment(answerSubject(topic), 14);
+  const answers = {
+    why: `${subject}，是因为正常理由留在昨天，结论只好提前赶到今天。`,
+    how: `先让${subject}自己做一遍，不会的部分再交给借口现场发挥。`,
+    whether: `可以，${subject}负责发生，后果负责假装从来没有见过你。`,
+    other: `${subject}，因为日历昨晚替它答应了，今天只好过来兑现。`,
+  };
+  return answers[answerKind(topic)];
 }

@@ -14,7 +14,9 @@ import {
 
 export { SKILL_SOURCE, SKILL_SHA256 };
 
+export const RUNTIME_INSTRUCTION = SKILL_SPEC.runtimeInstruction;
 export const COMMON_PROMPT = SKILL_SPEC.common;
+export const QUALITY_GATE = SKILL_SPEC.qualityGate;
 export const MODE_PROMPTS: Record<GenerationMode, string> = { ...SKILL_SPEC.modes };
 const STATE_EXEMPLARS = [...SKILL_SPEC.stateExemplars];
 
@@ -91,6 +93,7 @@ export function buildRuntimePrompt(
       : undefined,
     mechanisms.map((name) => MECHANISM_HINTS[name]).join("\n"),
     GENERATION_LENGTH_PROMPTS[generationLength],
+    QUALITY_GATE,
   ];
   if (strict) parts.push(strictSuffix(generationLength));
   return parts.filter(Boolean).join("\n\n");
@@ -104,13 +107,5 @@ export function buildSystemPrompt(
   mode: GenerationMode = "翻译",
 ): string {
   const runtime = buildRuntimePrompt(mood, mechanisms, strict, generationLength, mode);
-  return `${SKILL_SOURCE}
-
----
-
-# 本次网站运行配置（最高优先级）
-
-不要运行脚本，不要讨论 Skill。只执行下面已经选定的配置，并只输出最终句子。
-
-${runtime}`;
+  return `${SKILL_SOURCE}\n\n---\n\n${RUNTIME_INSTRUCTION}\n\n${runtime}`;
 }

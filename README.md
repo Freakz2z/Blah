@@ -1,34 +1,131 @@
-<p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="胡言乱语生成器：翻译原话，或者用胡言乱语回答问题。">
-</p>
+<div align="center">
+  <img src="./public/favicon.png" width="128" height="128" alt="胡言乱语生成器图标">
 
-<p align="center">
-  <a href="https://blah.freakz2z.com">在线体验</a> · <a href="#快速开始">本地运行</a> · <a href="#生成接口">生成接口</a>
-</p>
+  <img src="./assets/readme/hero.svg" width="100%" alt="胡言乱语生成器：让胡话先听懂你，再故意讲歪">
 
-一个极简的中文文字生成器：让它把原话翻译成胡言乱语，或者直接用胡言乱语回答问题。
+  <a href="https://blah.freakz2z.com">在线体验</a> ·
+  <a href="#把它作为-skill-使用">安装 Skill</a> ·
+  <a href="#生成接口">生成接口</a> ·
+  <a href="#本地开发">本地开发</a>
 
-> **模式**：回答　·　**问题**：为什么周一总是来得很快？　·　**精神状态**：差<br>
-> 因为周一办了加急，而周末还在窗口补材料。
+</div>
 
-## 它有什么不同
+## 先看效果
 
-- **两种生成模式**：翻译保留原话核心意思并扭曲逻辑；回答则直接用胡言乱语作答。
-- **三种精神状态**：正常、差、极差。它们不是“质量档位”，而是逐渐松动的语言逻辑。
-- **三档生成长度**：精辟（4–8 字）、中等（12–24 字）、正常（25–48 字）。短句也有独立提示词与校验规则。
-- **不只是随机拼词**：每次生成围绕选题的具体场景，并选择错误因果、字面误解、流程错位等荒谬机制。
-- **三候选筛选**：并行生成三个克制但有差异的候选句，再按原意保留、回答相关性、状态特征和重复度选择较好的一条；都不合格时会严格重试一次。
-- **可直接带走**：生成结果支持再次生成、复制和保存图片。
+### 翻译
 
-## 精神状态
+**原话**：我很困，但还是起床上班了。
 
-| 状态 | 阅读感受 |
+**结果**：我虽然困得很有原则，但身体为了全勤还是擅自把我送到了工位。
+
+> 保留主语、动作、否定和转折，让读者能够从胡话猜回原话；笑点来自错误解释，而不是另编一件事。
+---
+### 回答
+
+**问题**：为什么周一来得这么快？
+
+**结果**：因为周一怕迟到，周日晚上就开始往前跑，顺便撞掉了你的两个小时。
+
+> 先真正回答问题，再用一个荒谬理由收尾。问“为什么”就给原因，问“怎么办”就给做法，问“能不能”就先表态。
+
+## 生成方式
+
+
+**两种模式**：`翻译`保留原意并扭曲解释；`回答`直接用胡言乱语作答。
+
+**三种精神状态**：`正常`、`差`、`极差`控制逻辑松动程度，不代表质量高低。
+
+**三档生成长度**：`精辟` 4–8 个汉字、`中等` 12–24 个汉字、`正常` 25–48 个汉字。
+
+**八种构思机制**：错误因果、字面误解、主客倒置、目的倒置、情绪实体化、细节篡位、过度认真和时间借口。
+
+| 精神状态 | 允许发生什么 | 不允许发生什么 |
+| --- | --- | --- |
+| 正常 | 事实清楚，只加一个轻微歪理 | 疯狂意象和连续转场 |
+| 差 | 用一个明显错误的因果解释原场景 | 改写事实或堆叠多层解释 |
+| 极差 | 让场景中的事物突然有主见 | 换场景、换人物或随机堆名词 |
+
+## 质量是第一优先级
+
+生成强度不能凌驾于结果质量。固定裁决顺序是：
+
+```text
+原意可辨 / 回答切题 > 一句一梗 > 意外但说得通 > 精神状态强度
+```
+
+每次生成都会经过以下边界：
+
+1. **两遍成句**：先在心里写出忠实、直接的正常句，再只扭歪一个关系。
+2. **三候选竞争**：并行生成三个采用不同机制的候选结果。
+3. **硬性淘汰**：拒绝长度错误、事实漂移、答非所问、提示词泄露、重复和多句输出。
+4. **质量排序**：优先选择贴合输入、机制清楚且没有陈词滥调的候选。
+5. **反模板检查**：降低“排队、请假、加急、办理”等万能笑点，以及“因为……所以……”式重复解释的权重。
+6. **严格重试与兜底**：所有候选不合格时严格重试，仍失败才使用与模式、状态和长度匹配的本地兜底。
+
+换成任何输入仍然成立的句子，不算合格的胡言乱语。
+
+## 一份 Skill，多个入口
+
+完整协议只维护在
+[`skills/blahblah-generator/SKILL.md`](skills/blahblah-generator/SKILL.md)。
+网站构建时会把整份 Skill 编译进 Worker，Agent 则可以直接读取它：
+
+```text
+                         ┌─ Claude Code
+SKILL.md ────────────────├─ OpenClaw
+   │                     └─ Codex
+   │
+   └─ 编译进网站 → 模型候选 → 质量闸门 → 最终结果
+```
+
+这意味着社区修改生成协议后，不需要再同步维护一份隐藏的网站提示词。
+
+## 把它作为 Skill 使用
+
+### 安装
+
+克隆仓库后运行对应命令：
+
+```bash
+node skills/blahblah-generator/scripts/install.mjs codex
+node skills/blahblah-generator/scripts/install.mjs claude
+node skills/blahblah-generator/scripts/install.mjs openclaw
+```
+
+脚本会把完整的 `blahblah-generator` Skill 安装到对应宿主的 Skill 目录。
+
+| 宿主 | 安装位置 |
 | --- | --- |
-| 正常 | 第一眼像观点，第二眼才发现推理歪了。 |
-| 差 | 每一段都能懂，连起来却明显不成立。 |
-| 极差 | 句法还稳，世界观已经开始漏风。 |
+| Codex | `~/.agents/skills/blahblah-generator` |
+| Claude Code | `~/.claude/skills/blahblah-generator` |
+| OpenClaw | `~/.openclaw/skills/blahblah-generator` |
 
-## 快速开始
+### 原生调用
+
+安装后，可以让 Agent 直接使用 Skill：
+
+```text
+使用 blahblah-generator，把“我今天不想上班，但还是准时到了公司”
+按“翻译 / 差 / 正常”生成一句胡言乱语。
+```
+
+未指定配置时默认使用 `翻译 / 正常 / 正常`。
+
+### 调用网站质量管线
+
+如果希望不同宿主获得与网站相同的模型、候选筛选和质量校验，可以使用 Skill 附带的脚本：
+
+```bash
+node skills/blahblah-generator/scripts/generate.mjs \
+  --mode 翻译 \
+  --mood 正常 \
+  --length 正常 \
+  "我今天不想上班"
+```
+
+可通过环境变量 `BLAHBLAH_API_URL` 指向自行部署的兼容接口。
+
+## 快速启动网站
 
 需要 Node.js 22.13 或更高版本。
 
@@ -37,7 +134,7 @@ npm install
 npm run dev
 ```
 
-本地未配置生成服务凭据时，应用仍可启动，并返回内置兜底文案。
+打开终端中显示的本地地址即可使用。未配置模型凭据时，应用仍可启动，并返回内置兜底文案。
 
 ## 生成接口
 
@@ -46,9 +143,11 @@ POST /api/generate
 Content-Type: application/json
 ```
 
+请求示例：
+
 ```json
 {
-  "topic": "为什么周一总是来得很快？",
+  "topic": "为什么周一总是来得这么快？",
   "mode": "回答",
   "mood": "极差",
   "length": "精辟"
@@ -58,58 +157,75 @@ Content-Type: application/json
 成功响应：
 
 ```json
-{ "text": "……" }
+{
+  "text": "周末跑输了。"
+}
 ```
 
-`topic` 是要翻译或回答的文本，最长 30 个字；`mode` 可选值为 `翻译`、`回答`；`mood` 可选值为 `正常`、`差`、`极差`；`length` 可选值为 `精辟`（4–8 字）、`中等`（12–24 字）、`正常`（25–48 字）。`mode` 省略或无效时默认 `翻译`，其余可选项省略或无效时默认 `正常`。接口会对异常请求进行限流，并在生成结果不符合要求时自动换一种策略重试。
+| 字段 | 可选值 | 默认值 | 限制 |
+| --- | --- | --- | --- |
+| `topic` | 任意文本 | 无 | 必填，最多 30 个字符 |
+| `mode` | `翻译`、`回答` | `翻译` | 无效值回退为默认值 |
+| `mood` | `正常`、`差`、`极差` | `正常` | 无效值回退为默认值 |
+| `length` | `精辟`、`中等`、`正常` | `正常` | 无效值回退为默认值 |
 
-## 开发与测试
+接口包含异常请求限流，并会在模型结果不符合质量要求时自动更换候选或严格重试。
 
-生产环境默认使用 Ollama Cloud 的 `deepseek-v4-flash`。将 API Key 保存为
-Cloudflare Secret `OLLAMA_API_KEY`；可用 `OLLAMA_MODEL` 覆盖模型名，
-或将 `MODEL_PROVIDER` 设为 `deepseek` 临时切回原供应商。新密钥尚未配置时，
-服务会自动使用已有的 `DEEPSEEK_API_KEY`，避免生成接口中断。
-
-完整生成规则现在由
-[`skills/blahblah-generator/SKILL.md`](skills/blahblah-generator/SKILL.md)
-统一维护。开发和构建命令会先把整个 Skill 编译进 Worker；不要在
-`app/api/generate/prompts.ts` 中另建提示词副本。
-
-社区用户可直接使用 Skill 原生生成，也可通过附带脚本调用线上质量管线：
+## 本地开发
 
 ```bash
-node skills/blahblah-generator/scripts/generate.mjs \
-  --mode 翻译 --mood 正常 --length 正常 "我今天不想上班"
-```
-
-安装到不同宿主：
-
-```bash
-node skills/blahblah-generator/scripts/install.mjs codex
-node skills/blahblah-generator/scripts/install.mjs claude
-node skills/blahblah-generator/scripts/install.mjs openclaw
-```
-
-```bash
-npm run dev         # 本地开发
-npm run build       # 生产构建
-npm run test        # 全部测试
-npm run test:unit   # 仅运行生成质量测试
+npm run dev         # 编译 Skill 并启动开发服务
+npm run build       # 编译 Skill 并构建生产产物
+npm run test        # 构建并运行全部测试
+npm run test:unit   # 只运行生成质量测试
 npm run lint        # 代码检查
 ```
 
-核心生成逻辑位于 `app/api/generate/`：
+核心目录：
 
-- `prompts.ts`：生成模式、精神状态、荒谬机制与提示词组装。
-- `quality.ts`：结果清洗、校验、评分和近似重复检测。
-- `validation.ts`：选题输入校验。
+```text
+app/api/generate/
+├── prompts.ts          # 从 Skill 组装本次运行配置
+├── generated-skill.ts  # 自动生成，请勿手动编辑
+├── quality.ts          # 清洗、硬校验、评分与近似重复检测
+├── fallback.ts         # 分模式、状态和长度的兜底结果
+├── provider.ts         # Ollama Cloud 与 DeepSeek 适配
+└── validation.ts       # 输入和生成长度约束
+
+skills/blahblah-generator/
+├── SKILL.md            # 网站与社区共同使用的唯一规则源
+├── agents/openai.yaml  # Agent 展示元数据
+└── scripts/
+    ├── compile.mjs     # 把完整 Skill 编译进网站
+    ├── generate.mjs    # 调用网站质量管线
+    └── install.mjs     # 安装到不同 Agent 宿主
+```
+
+修改 `SKILL.md` 后，运行以下命令检查编译结果和质量边界：
+
+```bash
+npm run test:unit
+```
 
 ## 字体
 
-页面衬线字体为自托管的 [Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC)（SIL OFL 1.1），
-经 [cn-font-split](https://www.npmjs.com/package/cn-font-split) 按 unicode-range 切片存放在
-`public/fonts/`，浏览器只按页面实际用到的字形下载切片，保证各平台渲染一致。
+页面衬线字体为自托管的
+[Noto Serif SC](https://fonts.google.com/noto/specimen/Noto+Serif+SC)（SIL OFL 1.1）。
+
+字体通过 [cn-font-split](https://www.npmjs.com/package/cn-font-split)
+按 `unicode-range` 切片存放在 `public/fonts/`，浏览器只下载页面实际使用的字形。
 
 ## 参与改进
 
-欢迎提交 Issue 或 Pull Request。比起“更疯”，我们更想让每种模式和精神状态都有自己的一套歪理。
+欢迎提交 Issue 或 Pull Request，尤其欢迎：
+
+- 新的荒谬机制和更好的正例；
+- 能稳定复现质量问题的输入；
+- 面向其他 Agent 宿主的安装适配；
+- 对事实保留、回答相关性和中文表达的测试。
+
+---
+
+<div align="center">
+  <p>比起“更疯”，这个项目更在意胡话是否先听懂了你。</p>
+</div>

@@ -23,11 +23,18 @@ const PUNCT_RE = /[，。！？、；：“”‘’「」（）()…—·~～,.
 const HARD_LEAK_WORDS = [
   "精神状态", "作为AI", "作为人工智能", "语言模型", "AI助手", "人工智能助手",
   "系统提示", "荒谬机制", "本次优先机制", "优先机制", "码点",
-  "以下是", "这是一句", "风格示例", "【", "】",
+  "以下是", "这是一句", "风格示例", "原话", "问题本身", "这句话", "解释自己",
+  "逻辑", "事实",
+  "【", "】",
 ];
 /** Ordinary words that merely smell like leakage — heavy score penalty
  * instead of rejection, so both candidates tripping doesn't force a 502. */
 const SOFT_LEAK_WORDS = ["选题", "生成器", "提示词", "字数"];
+/** Generic punchline crutches that can be attached to almost any input.
+ * They remain legal, but lose ranking unless the user's scene contains them. */
+const GENERIC_CRUTCH_WORDS = [
+  "排队", "请假", "加急", "开会", "办理", "负责", "接管", "流程", "手续",
+];
 
 const STOPWORDS = new Set([
   "的", "了", "呢", "吗", "吧", "啊", "是", "我", "你", "他", "她", "它", "们", "和", "与",
@@ -77,6 +84,7 @@ const CLICHE_WORDS = [
   "奶茶", "意大利面", "宇宙", "量子", "黑洞", "西兰花", "保安", "WiFi", "wifi", "外卖",
   "加班", "甲方", "显眼包", "多巴胺", "赛博", "异世界", "转生", "猫", "狗", "月亮",
   "冰箱", "香菜", "秃头", "头发", "枸杞", "保温杯", "打工人", "内卷", "躺平",
+  "上辈子", "快递驿站",
 ];
 
 /* ── Cleaning ─────────────────────────────────────────────────────────── */
@@ -221,6 +229,11 @@ export function validateGeneratedText(
         Array.from(core).filter((ch) => HAN_RE.test(ch) && !STOPWORDS.has(ch)),
       );
       if (coreChars.size > 0 && ![...coreChars].some((ch) => text.includes(ch))) return "mode";
+      if (/为什么|为何/.test(topic) && !/因为|原因|由于|怪|是/.test(text)) return "mode";
+      if (/怎么|怎样|如何|怎么办/.test(topic) &&
+          !/先|可以|把|只要|直接|让|别|去|用|得/.test(text)) return "mode";
+      if (/能不能|可不可以|是不是|是否/.test(topic) &&
+          !/^(能|不能|可以|不可以|当然|是|不是)/.test(text)) return "mode";
     }
   }
 
@@ -289,6 +302,16 @@ export function scoreGeneratedText(
   for (const word of SOFT_LEAK_WORDS) {
     if (text.includes(word) && !topic.includes(word)) score -= 20;
   }
+  let crutchPenalty = 0;
+  for (const word of GENERIC_CRUTCH_WORDS) {
+    if (text.includes(word) && !topic.includes(word)) crutchPenalty += 7;
+  }
+  score -= Math.min(crutchPenalty, 21);
+
+  const causalHits = [
+    "因为", "所以", "因此", "于是", "既然", "导致", "证明", "说明", "难怪", "毕竟", "从而", "可见",
+  ].filter((word) => text.includes(word) && !topic.includes(word)).length;
+  if (causalHits > 1) score -= (causalHits - 1) * 8;
 
   let clichePenalty = 0;
   for (const word of CLICHE_WORDS) {

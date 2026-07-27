@@ -18,6 +18,8 @@ import {
   EXEMPLAR_SENTENCES,
   MENTAL_STATE_PROMPTS,
   MODE_PROMPTS,
+  QUALITY_GATE,
+  RUNTIME_INSTRUCTION,
   GENERATION_LENGTH_PROMPTS,
   MECHANISM_HINTS,
   TIER_MECHANISMS,
@@ -84,7 +86,7 @@ test("validateGeneratedText applies the selected generation-length contract", ()
   assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "精辟"), null);
   assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "中等"), "length");
   assert.equal(
-    validateGeneratedText("考研先别急着下结论，它正排队解释自己。", "考研", "正常", "中等"),
+    validateGeneratedText("考研先别急着下结论，录取通知还在练习敲门。", "考研", "正常", "中等"),
     null,
   );
 });
@@ -98,6 +100,10 @@ test("validateGeneratedText rejects non-Chinese garbage but exempts topic chars"
 test("validateGeneratedText rejects prompt leakage", () => {
   const leaked = "根据当前的精神状态来判断，这句话应该写得再荒谬一点才算合格。";
   assert.equal(validateGeneratedText(leaked, "考研"), "leak");
+  assert.equal(
+    validateGeneratedText("考研这句话正在认真解释自己为什么必须继续排队，最后仍然没有说出任何有用内容。", "考研"),
+    "leak",
+  );
 });
 
 test("validateGeneratedText rejects character runs and multi-sentence output", () => {
@@ -211,29 +217,20 @@ test("compiled Skill is fresh and included verbatim in every website prompt", ()
   assert.equal(createHash("sha256").update(source).digest("hex"), SKILL_SHA256);
 });
 
-test("runtime appendix preserves representative pre-Skill prompt hashes", () => {
+test("runtime appendix applies the Skill quality gate to every configuration", () => {
   const cases = [
-    {
-      args: ["正常", ["错误因果"], false, "正常", "翻译"],
-      hash: "25a0aa85c6aec8971f69a04265f3ba1a9a5d3f939f2178f9d3bfc8e197ccbbcf",
-    },
-    {
-      args: ["极差", ["情绪实体化"], false, "正常", "回答"],
-      hash: "5da2dfeb79a8f6670d0864ace16eb96dd2f0ccdeccc734ea33d954660870bd52",
-    },
-    {
-      args: ["正常", ["错误因果"], false, "精辟", "翻译"],
-      hash: "20240cfb756a57ee84c2c542be74cc74dd0ff05257db123f3343fdcca2fc83a9",
-    },
-    {
-      args: ["差", ["错误因果"], true, "中等", "回答"],
-      hash: "fb38d2d05cec27ea2d7863e13dbb31fc5ce0f55f2e3040cf2a888b116e1539f1",
-    },
+    ["正常", ["错误因果"], false, "正常", "翻译"],
+    ["极差", ["情绪实体化"], false, "正常", "回答"],
+    ["正常", ["错误因果"], false, "精辟", "翻译"],
+    ["差", ["错误因果"], true, "中等", "回答"],
   ];
-  for (const { args, hash } of cases) {
+  for (const args of cases) {
     const prompt = buildRuntimePrompt(...args);
-    assert.equal(createHash("sha256").update(prompt).digest("hex"), hash);
+    assert.ok(prompt.includes(QUALITY_GATE));
+    assert.match(prompt, /原意可辨或回答切题 > 一句一梗/);
+    assert.match(prompt, /若换成任何输入仍然成立/);
   }
+  assert.ok(buildSystemPrompt("正常", ["错误因果"]).includes(RUNTIME_INSTRUCTION));
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
@@ -264,13 +261,15 @@ test("every mode and length has a valid fallback sentence", () => {
     回答: "为什么周一总是来得很快？",
   };
   for (const mode of ["翻译", "回答"]) {
-    for (const length of ["精辟", "中等", "正常"]) {
-      const text = fallbackForLength(topics[mode], "正常", length, mode);
-      assert.equal(
-        validateGeneratedText(text, topics[mode], "正常", length, mode),
-        null,
-        `${mode}/${length}: ${text}`,
-      );
+    for (const mood of ["正常", "差", "极差"]) {
+      for (const length of ["精辟", "中等", "正常"]) {
+        const text = fallbackForLength(topics[mode], mood, length, mode);
+        assert.equal(
+          validateGeneratedText(text, topics[mode], mood, length, mode),
+          null,
+          `${mode}/${mood}/${length}: ${text}`,
+        );
+      }
     }
   }
   assert.match(fallbackForLength(topics["翻译"], "正常", "中等", "翻译"), /我今天不想上班/);
@@ -299,8 +298,28 @@ test("answer mode rewards direct relevance and rejects question repetition", () 
   const answer = "因为周末一直舍不得下班，周一只好提前进场把它从日历上请走。";
   const repeated = "为什么周一总是来得这么快其实就是问题本身，答案决定继续保持沉默。";
   assert.equal(validateGeneratedText(answer, topic, "正常", "正常", "回答"), null);
-  assert.equal(validateGeneratedText(repeated, topic, "正常", "正常", "回答"), "mode");
+  assert.equal(validateGeneratedText(repeated, topic, "正常", "正常", "回答"), "leak");
   assert.ok(modeFidelityScore(answer, topic, "回答") > modeFidelityScore(repeated, topic, "回答"));
+  assert.equal(
+    validateGeneratedText(
+      "周一把日历折成滑梯，闹钟一松手就滑到了床头，顺便提前叫醒了整个房间。",
+      topic,
+      "正常",
+      "正常",
+      "回答",
+    ),
+    "mode",
+  );
+  assert.equal(
+    validateGeneratedText(
+      "夜宵负责填饱肚子，减肥负责填饱计划。",
+      "能不能一边减肥一边吃夜宵？",
+      "正常",
+      "中等",
+      "回答",
+    ),
+    "mode",
+  );
 });
 
 test("scoring penalizes bureaucratic and numeric filler", () => {
@@ -311,6 +330,15 @@ test("scoring penalizes bureaucratic and numeric filler", () => {
   const bloatedScore = scoreGeneratedText(bloated, topic, "正常", 0, ["错误因果"], "正常", "回答");
   assert.ok(cleanScore.score > bloatedScore.score);
   assert.equal(validateGeneratedText(bloated, topic, "正常", "正常", "回答"), "style");
+});
+
+test("scoring demotes generic punchline crutches and stacked explanations", () => {
+  const topic = "我忘记带伞了";
+  const specific = "我忘记带伞了，雨只好逐滴提醒我今天出门没有屋顶。";
+  const generic = "我忘记带伞了，所以雨天负责给我的借口办理加急手续。";
+  const specificScore = scoreGeneratedText(specific, topic, "差", 0, ["错误因果"]);
+  const genericScore = scoreGeneratedText(generic, topic, "差", 0, ["错误因果"]);
+  assert.ok(specificScore.score > genericScore.score);
 });
 
 test("Ollama Cloud is preferred with the same deepseek-v4-flash model", () => {
