@@ -35,7 +35,12 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /胡言乱语生成器/);
 
   // Header
-  assert.match(html, /theme-toggle/);
+  assert.match(html, /settings-toggle/);
+  assert.match(html, /aria-controls="settings-panel"/);
+  assert.match(html, /id="settings-panel"/);
+  assert.match(html, /主题设置/);
+  assert.match(html, /模式设置/);
+  assert.doesNotMatch(html, /theme-toggle/);
 
   // Mode controls
   assert.match(html, /生成模式/);
@@ -103,6 +108,10 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   assert.match(page, /胡言乱语生成器/);
   assert.match(page, /"use client"/);
   assert.doesNotMatch(page, /SkeletonPreview/);
+  const mainStart = page.indexOf('className="main-content"');
+  const primaryButton = page.indexOf("Primary button", mainStart);
+  const mainControls = page.slice(mainStart, primaryButton);
+  assert.doesNotMatch(mainControls, /mode-block|mood-block|length-block|theme-block/);
 
   // Layout is clean — no skeleton references
   assert.match(layout, /胡言乱语生成器/);

@@ -6,6 +6,11 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 const MODES = ["翻译", "回答"] as const;
 const MOODS = ["极差", "差", "正常"];
 const LENGTH_OPTIONS = ["精辟", "中等", "正常"] as const;
+const THEME_OPTIONS = [
+  { value: "auto", label: "自动" },
+  { value: "light", label: "亮色" },
+  { value: "dark", label: "暗色" },
+] as const;
 const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
   翻译: ["正在拆解原话", "正在替换正常逻辑", "正在校对胡言乱语", "译文有点烫，正在吹凉"],
   回答: ["正在理解问题", "正在建立不必要的联系", "正在强行得出答案", "答案有点烫，正在吹凉"],
@@ -32,10 +37,13 @@ export default function Home() {
   const [animKey, setAnimKey] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
 
@@ -72,9 +80,29 @@ export default function Home() {
     }
   }, [theme]);
 
-  const cycleTheme = useCallback(() => {
-    setTheme((t) => (t === "auto" ? "light" : t === "light" ? "dark" : "auto"));
-  }, []);
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSettingsOpen(false);
+      settingsButtonRef.current?.focus();
+    };
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        settingsPanelRef.current?.contains(target) ||
+        settingsButtonRef.current?.contains(target)
+      )
+        return;
+      setSettingsOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+    };
+  }, [settingsOpen]);
 
   /* ── Slider logic ────────────────────────────── */
   const getMoodFromPosition = useCallback((clientX: number) => {
@@ -309,64 +337,220 @@ export default function Home() {
             <p className="subtitle">翻译你的话，或者认真回答它。</p>
           </div>
           <button
-            className="theme-toggle"
+            ref={settingsButtonRef}
+            className={`settings-toggle${settingsOpen ? " active" : ""}`}
             type="button"
-            onClick={cycleTheme}
-            aria-label={
-              theme === "auto"
-                ? "当前：跟随系统，点击切换亮色"
-                : theme === "light"
-                  ? "当前：亮色模式，点击切换暗色"
-                  : "当前：暗色模式，点击切换自动"
-            }
+            onClick={() => setSettingsOpen((open) => !open)}
+            aria-label={settingsOpen ? "关闭设置" : "打开设置"}
+            aria-expanded={settingsOpen}
+            aria-controls="settings-panel"
           >
-            {theme === "auto" ? "◐" : theme === "light" ? "○" : "●"}
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6" />
+            </svg>
           </button>
+
+          <div
+            ref={settingsPanelRef}
+            id="settings-panel"
+            className="settings-popover"
+            role="dialog"
+            aria-label="设置"
+            hidden={!settingsOpen}
+          >
+            <div className="settings-header">
+              <span>设置</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsOpen(false);
+                  settingsButtonRef.current?.focus();
+                }}
+                aria-label="关闭设置"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="settings-content">
+              <fieldset className="setting-block theme-block">
+                <legend className="micro-label">主题设置</legend>
+                <div className="theme-options" role="radiogroup" aria-label="主题设置">
+                  {THEME_OPTIONS.map((option, index) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      className={`theme-option${theme === option.value ? " active" : ""}`}
+                      aria-checked={theme === option.value}
+                      tabIndex={theme === option.value ? 0 : -1}
+                      onClick={() => setTheme(option.value)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + THEME_OPTIONS.length) % THEME_OPTIONS.length;
+                        setTheme(THEME_OPTIONS[nextIndex].value);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".theme-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="mode-block" disabled={status === "thinking"}>
+                <legend className="micro-label">模式设置</legend>
+                <div className="mode-options" role="radiogroup" aria-label="生成模式">
+                  {MODES.map((value, index) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      className={`mode-option${mode === value ? " active" : ""}`}
+                      aria-checked={mode === value}
+                      tabIndex={mode === value ? 0 : -1}
+                      onClick={() => {
+                        setMode(value);
+                        setResult("");
+                        setStatus("idle");
+                        setMessage("");
+                      }}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + MODES.length) % MODES.length;
+                        setMode(MODES[nextIndex]);
+                        setResult("");
+                        setStatus("idle");
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      <span>{value}</span>
+                      <small>{value === "翻译" ? "把原话变胡话" : "用胡话作答"}</small>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className={`mood-block${status === "thinking" ? " disabled" : ""}`}>
+                <div className="mood-label-row">
+                  <span className="mood-label micro-label">精神状态</span>
+                </div>
+
+                <div
+                  ref={trackRef}
+                  className={`mood-track${dragging ? " dragging" : ""}`}
+                  role="slider"
+                  aria-label="精神状态"
+                  aria-valuemin={0}
+                  aria-valuemax={maxIndex}
+                  aria-valuenow={mood}
+                  aria-valuetext={MOODS[mood]}
+                  aria-disabled={status === "thinking"}
+                  tabIndex={status === "thinking" ? -1 : 0}
+                  onPointerDown={(event) => {
+                    if (status !== "thinking") handleTrackPointerDown(event);
+                  }}
+                  onPointerMove={(event) => {
+                    if (status !== "thinking") handleTrackPointerMove(event);
+                  }}
+                  onPointerUp={handleTrackPointerUp}
+                  onPointerCancel={handleTrackPointerUp}
+                  onKeyDown={(e) => {
+                    if (status === "thinking") return;
+                    if (e.key === "ArrowLeft" || e.key === "ArrowDown" || e.key === "PageDown") {
+                      e.preventDefault();
+                      setMood(Math.max(0, mood - 1));
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "PageUp") {
+                      e.preventDefault();
+                      setMood(Math.min(maxIndex, mood + 1));
+                    } else if (e.key === "Home") {
+                      e.preventDefault();
+                      setMood(0);
+                    } else if (e.key === "End") {
+                      e.preventDefault();
+                      setMood(maxIndex);
+                    }
+                  }}
+                >
+                  <div
+                    className="mood-track-fill"
+                    style={{ width: `calc(${fillPercent} / 100 * (100% - 14px))` }}
+                  />
+                  <div className="mood-labels">
+                    {MOODS.map((label, i) => (
+                      <button
+                        key={label}
+                        type="button"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        className={`mood-label-item${mood === i ? " active" : ""}`}
+                        style={{ left: `${(i / maxIndex) * 100}%` }}
+                        onClick={() => {
+                          if (status !== "thinking") setMood(i);
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className="mood-thumb"
+                    style={{ left: `calc(7px + ${fillPercent} / 100 * (100% - 14px))` }}
+                  />
+                </div>
+              </div>
+
+              <fieldset className="length-block" disabled={status === "thinking"}>
+                <legend className="micro-label">生成长度</legend>
+                <div className="length-options" role="radiogroup" aria-label="生成长度">
+                  {LENGTH_OPTIONS.map((value, index) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      className={`length-option${generationLength === value ? " active" : ""}`}
+                      aria-checked={generationLength === value}
+                      tabIndex={generationLength === value ? 0 : -1}
+                      onClick={() => setGenerationLength(value)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
+                        setGenerationLength(LENGTH_OPTIONS[nextIndex]);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+          </div>
         </header>
 
         {/* ── Main Content ──────────────────────── */}
         <div className="main-content">
-          {/* Mode */}
-          <fieldset className="mode-block" disabled={status === "thinking"}>
-            <legend className="micro-label">模式</legend>
-            <div className="mode-options" role="radiogroup" aria-label="生成模式">
-              {MODES.map((value, index) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  className={`mode-option${mode === value ? " active" : ""}`}
-                  aria-checked={mode === value}
-                  tabIndex={mode === value ? 0 : -1}
-                  onClick={() => {
-                    setMode(value);
-                    setResult("");
-                    setStatus("idle");
-                    setMessage("");
-                  }}
-                  onKeyDown={(event) => {
-                    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                      ? 1
-                      : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                        ? -1
-                        : 0;
-                    if (!direction) return;
-                    event.preventDefault();
-                    const nextIndex = (index + direction + MODES.length) % MODES.length;
-                    setMode(MODES[nextIndex]);
-                    setResult("");
-                    setStatus("idle");
-                    const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
-                    options?.[nextIndex]?.focus();
-                  }}
-                >
-                  <span>{value}</span>
-                  <small>{value === "翻译" ? "把原话变胡话" : "用胡话作答"}</small>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
           {/* Input */}
           <form id="gen-form" className="generator-form" onSubmit={generate}>
             <div className="field-block">
@@ -398,100 +582,6 @@ export default function Home() {
               />
             </div>
           </form>
-
-          {/* Mood Slider */}
-          <div className="mood-block">
-            <div className="mood-label-row">
-              <span className="mood-label micro-label">精神状态</span>
-            </div>
-
-            <div
-              ref={trackRef}
-              className={`mood-track${dragging ? " dragging" : ""}`}
-              role="slider"
-              aria-label="精神状态"
-              aria-valuemin={0}
-              aria-valuemax={maxIndex}
-              aria-valuenow={mood}
-              aria-valuetext={MOODS[mood]}
-              tabIndex={0}
-              onPointerDown={handleTrackPointerDown}
-              onPointerMove={handleTrackPointerMove}
-              onPointerUp={handleTrackPointerUp}
-              onPointerCancel={handleTrackPointerUp}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft" || e.key === "ArrowDown" || e.key === "PageDown") {
-                  e.preventDefault();
-                  setMood(Math.max(0, mood - 1));
-                } else if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "PageUp") {
-                  e.preventDefault();
-                  setMood(Math.min(maxIndex, mood + 1));
-                } else if (e.key === "Home") {
-                  e.preventDefault();
-                  setMood(0);
-                } else if (e.key === "End") {
-                  e.preventDefault();
-                  setMood(maxIndex);
-                }
-              }}
-            >
-              <div
-                className="mood-track-fill"
-                style={{ width: `calc(${fillPercent} / 100 * (100% - 14px))` }}
-              />
-              <div className="mood-labels">
-                {MOODS.map((label, i) => (
-                  <button
-                    key={label}
-                    type="button"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className={`mood-label-item${mood === i ? " active" : ""}`}
-                    style={{ left: `${(i / maxIndex) * 100}%` }}
-                    onClick={() => setMood(i)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div
-                className="mood-thumb"
-                style={{ left: `calc(7px + ${fillPercent} / 100 * (100% - 14px))` }}
-              />
-            </div>
-          </div>
-
-          <fieldset className="length-block" disabled={status === "thinking"}>
-            <legend className="micro-label">生成长度</legend>
-            <div className="length-options" role="radiogroup" aria-label="生成长度">
-              {LENGTH_OPTIONS.map((value, index) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  className={`length-option${generationLength === value ? " active" : ""}`}
-                  aria-checked={generationLength === value}
-                  tabIndex={generationLength === value ? 0 : -1}
-                  onClick={() => setGenerationLength(value)}
-                  onKeyDown={(event) => {
-                    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                      ? 1
-                      : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                        ? -1
-                        : 0;
-                    if (!direction) return;
-                    event.preventDefault();
-                    const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
-                    setGenerationLength(LENGTH_OPTIONS[nextIndex].value);
-                    const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
-                    options?.[nextIndex]?.focus();
-                  }}
-                >
-                  {value}
-                </button>
-              ))}
-            </div>
-          </fieldset>
 
           {/* Primary button — lives outside the form, submits via form attr */}
           <button
