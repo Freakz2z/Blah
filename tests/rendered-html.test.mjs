@@ -37,23 +37,30 @@ test("renders the nonsense generator page", async () => {
   // Header
   assert.match(html, /theme-toggle/);
 
-  // Topic input
+  // Mode controls
+  assert.match(html, /生成模式/);
+  assert.match(html, /翻译/);
+  assert.match(html, /回答/);
+  assert.match(html, /把原话变胡话/);
+  assert.match(html, /用胡话作答/);
+
+  // Text input
   assert.match(html, /<label\s[^>]*for="topic"[^>]*>/i);
   assert.match(html, /id="topic"/);
-  assert.match(html, /placeholder="输入选题"/);
+  assert.match(html, /placeholder="输入一句话"/);
 
   // Char count — RSC wraps text segments with comment markers
   assert.match(html, /0<!.*?\/.*?30</);
 
-  // Mood slider — 5 states
+  // Mood slider — 3 states
   assert.match(html, /role="slider"/);
   assert.match(html, /aria-valuetext/);
-  assert.match(html, /钝角/);
-  assert.match(html, /最差/);
   assert.match(html, /极差/);
   assert.match(html, /差/);
   assert.match(html, /正常/);
-  assert.match(html, /aria-valuenow="4"/);
+  assert.doesNotMatch(html, /钝角/);
+  assert.doesNotMatch(html, /最差/);
+  assert.match(html, /aria-valuenow="2"/);
 
   // Generation-length controls
   assert.match(html, /生成长度/);
@@ -65,7 +72,7 @@ test("renders the nonsense generator page", async () => {
   // Mood label
 
   // Primary button
-  assert.match(html, /开始胡言乱语/);
+  assert.match(html, /开始翻译/);
 
   // Result section
   assert.match(html, /等一句没有用的话/);

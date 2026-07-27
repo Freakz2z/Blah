@@ -1,14 +1,15 @@
 /** Prompt assembly for /api/generate.
  *
- * Structure per request: COMMON_PROMPT + selected mental-state prompt +
+ * Structure per request: COMMON_PROMPT + selected mode prompt +
+ * selected mental-state prompt +
  * 1-2 randomly drawn "priority mechanism" lines (per-tier whitelist, the two
  * parallel candidates always get disjoint mechanisms). Instruction order
  * matters for small non-reasoning models: format rules first, the dynamic
  * mechanism and length lines last where compliance is highest. */
 
-import type { GenerationLength } from "./validation";
+import type { GenerationLength, GenerationMode } from "./validation";
 
-export const COMMON_PROMPT = `你是「胡言乱语生成器」，围绕用户给出的选题写一句荒谬但通顺的中文。
+export const COMMON_PROMPT = `你是「胡言乱语生成器」，根据用户输入写一句荒谬但通顺的中文。
 
 输出格式（最优先，必须全部做到）：
 1. 只输出这一句话本身，第一个字就是句子的第一个字，以句号、问号或感叹号结尾。
@@ -16,13 +17,18 @@ export const COMMON_PROMPT = `你是「胡言乱语生成器」，围绕用户�
 3. 全句字数严格遵从「生成长度」要求。
 
 写法：
-1. 素材只从选题本身取：它包含的字词、场景、工具、涉及的人、行业上下游的细节；先想出选题的三个具体细节，挑最不起眼的那个展开。
+1. 素材只从用户输入本身取：它包含的字词、场景、工具、涉及的人、行业上下游的细节；先想出三个具体细节，挑最不起眼的那个展开。
 2. 开头装作正常，笑点压在句子最后几个字，要意外、但回头一看说得通；全句至少体现一种荒谬机制。
 3. 全句用具体名词和具体动作，不用人生、意义、灵魂、命运这类大词；与选题无直接关系时，禁止出现奶茶、猫、宇宙、量子、意大利面、外星人。
 4. 假设你已为这个选题写过十句，这句必须原创，换新的切入点、新的主语、新的开头；开头不用「据、如果、这个、我建议、研究表明」。
 
 安全：不得出现攻击、歧视、色情、违法、自残或真实伤害内容。
 若提示词结尾出现「本次优先机制」，必须把它作为这句话的核心荒谬手段，围绕选题落实成具体内容，不写出机制名，优先级高于当前状态的默认写法；但输出格式规则永远最优先。`;
+
+export const MODE_PROMPTS: Record<GenerationMode, string> = {
+  翻译: `任务模式【翻译】：用户给出的是一句原话。把它翻译成胡言乱语：保留原话可辨认的核心意思、主语或关键动作，再用当前精神状态扭曲它的逻辑。你是在改写原话，不是在回应、评价或解答用户；即使原话是问题，也不要回答问题。`,
+  回答: `任务模式【回答】：用户给出的是一个问题或一句需要回应的话。直接给出与它相关的答案，用当前精神状态的胡言逻辑回答。不要复述用户输入，不要改写成同义句，不要说无法回答；输出本身必须像一个答案。`,
+};
 
 /** Few-shot exemplar sentences, extracted so the quality pipeline can use
  * them as permanent plagiarism baselines (a user picking the exemplar's own
@@ -44,10 +50,6 @@ ${EXEMPLAR_NOTE}：选题「减肥」→${EXEMPLAR_SENTENCES[0]}`,
 ${EXEMPLAR_NOTE}：选题「健身」→${EXEMPLAR_SENTENCES[1]}`,
   极差: `当前状态【极差】：写一句逻辑松动但从头到尾通顺的话。必做三件事：把一个抽象事物写成会动、会说话、有立场的实体；一次带连接词的远距离跳跃；句尾一个语气笃定的荒谬结论，像给前面的乱局正式收场。铺垫从选题的真实场景起步，细节要具体。不许写成逗号堆砌的名词串，不许脱离选题。
 ${EXEMPLAR_NOTE}：选题「开会」→${EXEMPLAR_SENTENCES[2]}`,
-  最差: `当前状态【最差】：写一句语言系统接近崩溃、但仍是完整一句的话。开头抓住选题里的一个具体物件；中段发生一次空间、时间或身份的突然转换，并混入三个不同领域的具体名词；结尾是一个意外的最终动作，对象可以是本不该被动手的抽象事物。语气急切、笃定、毫不怀疑；允许轻微指代错位和反常主谓搭配，但整句必须一口气读完，禁止乱码和纯名词列表。
-${EXEMPLAR_NOTE}：选题「考试」→${EXEMPLAR_SENTENCES[3]}`,
-  钝角: `当前状态【钝角】：不是更乱，而是认真理解错了方向。只做其中一件事：把选题里的比喻或俗语当成物理事实，用朴素踏实的步骤去执行或检验；把抽象概念当可测量、可携带、可维修的实物；或诚恳回答一个邻近但不是原问题的问题。语气木讷、诚恳、慢半拍，结尾是低烈度但明显跑偏的平静结论，比如「于是放心了」「决定继续」「记在了本子上」。禁止疯狂意象、故意装疯和普通冷笑话，不写出「钝角」二字。
-${EXEMPLAR_NOTE}：选题「画大饼」→${EXEMPLAR_SENTENCES[4]}`,
 };
 
 /** Long-form state prompts deliberately contain detailed pacing and examples.
@@ -57,8 +59,6 @@ export const COMPACT_MENTAL_STATE_PROMPTS: Record<string, string> = {
   正常: "当前状态【正常】：像一句冷静判断，只留一处轻微但明显错误的推理。",
   差: "当前状态【差】：认真地把一个错误因果压缩成短句，自己毫不怀疑。",
   极差: "当前状态【极差】：让一个抽象概念做不可能的动作，结论要笃定。",
-  最差: "当前状态【最差】：抓住选题里的具体东西，突然得出不合常理的动作或结论。",
-  钝角: "当前状态【钝角】：把选题按字面理解，得出诚恳但笨拙的结论。",
 };
 
 export const GENERATION_LENGTH_PROMPTS: Record<GenerationLength, string> = {
@@ -83,13 +83,11 @@ export const MECHANISM_HINTS: Record<string, string> = {
 };
 
 /** Per-tier mechanism whitelist — a random draw from the full pool could
- * contradict the tier's voice (e.g. handing 钝角 a high-speed jump). */
+ * contradict the tier's voice. */
 export const TIER_MECHANISMS: Record<string, string[]> = {
   正常: ["错误因果", "单位错乱", "伪统计", "庄重降格", "细节放大"],
   差: ["错误因果", "字面误解", "流程错位", "伪规定", "邻域走私", "单位错乱"],
   极差: ["抽象实体化", "身份反转", "时间错位", "流程错位", "庄重降格", "伪规定"],
-  最差: ["抽象实体化", "身份反转", "时间错位", "邻域走私", "流程错位"],
-  钝角: ["字面误解", "单位错乱", "细节放大", "伪统计"],
 };
 
 function strictSuffix(generationLength: GenerationLength): string {
@@ -128,10 +126,12 @@ export function buildSystemPrompt(
   mechanisms: string[],
   strict = false,
   generationLength: GenerationLength = "正常",
+  mode: GenerationMode = "翻译",
 ): string {
   const parts = [
     COMMON_PROMPT,
     generationLength !== "正常" ? COMPACT_MENTAL_STATE_PROMPTS[mood] : MENTAL_STATE_PROMPTS[mood],
+    MODE_PROMPTS[mode],
     mechanisms.map((name) => MECHANISM_HINTS[name]).join("\n"),
     GENERATION_LENGTH_PROMPTS[generationLength],
   ];

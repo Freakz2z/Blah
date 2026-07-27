@@ -15,6 +15,7 @@ import {
   COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
   MENTAL_STATE_PROMPTS,
+  MODE_PROMPTS,
   GENERATION_LENGTH_PROMPTS,
   MECHANISM_HINTS,
   TIER_MECHANISMS,
@@ -23,6 +24,7 @@ import {
 } from "../app/api/generate/prompts.ts";
 import {
   normalizeGenerationLength,
+  normalizeGenerationMode,
   normalizeTopic,
 } from "../app/api/generate/validation.ts";
 
@@ -104,11 +106,9 @@ test("unit symbols like ℃ pass the charset whitelist", () => {
   assert.equal(validateGeneratedText(units, "考研"), null);
 });
 
-test("钝角 leakage is only enforced for the 钝角 mood", () => {
+test("removed mood names remain valid ordinary topic vocabulary", () => {
   const geometry = "老师说这个角看起来是钝角，我回家量了量门框，发现家里到处都是钝角。";
   assert.equal(validateGeneratedText(geometry, "数学", "正常"), null);
-  assert.equal(validateGeneratedText(geometry, "数学", "钝角"), "leak");
-  assert.equal(validateGeneratedText(geometry, "钝角", "钝角"), null);
 });
 
 test("soft leak words penalize the score without rejecting the sentence", () => {
@@ -153,6 +153,7 @@ test("few-shot exemplars are permanent plagiarism baselines", () => {
 });
 
 test("prompt tables are internally consistent", () => {
+  assert.deepEqual(Object.keys(MENTAL_STATE_PROMPTS).sort(), ["差", "极差", "正常"].sort());
   assert.deepEqual(
     Object.keys(TIER_MECHANISMS).sort(),
     Object.keys(MENTAL_STATE_PROMPTS).sort(),
@@ -174,15 +175,17 @@ test("drawMechanismSets keeps candidates disjoint and inside the tier whitelist"
   }
 });
 
-test("buildSystemPrompt layers common, tier, mechanism, and strict parts", () => {
-  const prompt = buildSystemPrompt("钝角", ["字面误解"], false);
+test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts", () => {
+  const prompt = buildSystemPrompt("极差", ["抽象实体化"], false, "正常", "回答");
   assert.ok(prompt.startsWith(COMMON_PROMPT));
-  assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["钝角"]));
-  assert.ok(prompt.includes(MECHANISM_HINTS["字面误解"]));
+  assert.ok(prompt.includes(MODE_PROMPTS["回答"]));
+  assert.ok(!prompt.includes(MODE_PROMPTS["翻译"]));
+  assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["极差"]));
+  assert.ok(prompt.includes(MECHANISM_HINTS["抽象实体化"]));
   assert.ok(!prompt.includes("严格执行"));
-  assert.ok(buildSystemPrompt("钝角", ["字面误解"], true).includes("严格执行"));
-  assert.ok(buildSystemPrompt("钝角", ["字面误解"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
-  assert.ok(buildSystemPrompt("钝角", ["字面误解"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["钝角"]));
+  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], true).includes("严格执行"));
+  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
+  assert.ok(buildSystemPrompt("极差", ["抽象实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
@@ -198,4 +201,11 @@ test("normalizeGenerationLength defaults invalid values to 正常", () => {
   assert.equal(normalizeGenerationLength("精辟"), "精辟");
   assert.equal(normalizeGenerationLength("很长"), "正常");
   assert.equal(normalizeGenerationLength(undefined), "正常");
+});
+
+test("normalizeGenerationMode accepts two modes and defaults invalid values to 翻译", () => {
+  assert.equal(normalizeGenerationMode("翻译"), "翻译");
+  assert.equal(normalizeGenerationMode("回答"), "回答");
+  assert.equal(normalizeGenerationMode("聊天"), "翻译");
+  assert.equal(normalizeGenerationMode(undefined), "翻译");
 });

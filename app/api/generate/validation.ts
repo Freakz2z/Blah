@@ -4,6 +4,9 @@
 
 export const MAX_TOPIC_LENGTH = 30;
 
+export const GENERATION_MODES = ["翻译", "回答"] as const;
+export type GenerationMode = (typeof GENERATION_MODES)[number];
+
 export const GENERATION_LENGTHS = ["精辟", "中等", "正常"] as const;
 export type GenerationLength = (typeof GENERATION_LENGTHS)[number];
 
@@ -18,6 +21,12 @@ export function normalizeTopic(value: unknown): string | null {
   const topic = value.trim();
   if (!topic || Array.from(topic).length > MAX_TOPIC_LENGTH) return null;
   return topic;
+}
+
+export function normalizeGenerationMode(value: unknown): GenerationMode {
+  return typeof value === "string" && GENERATION_MODES.includes(value as GenerationMode)
+    ? value as GenerationMode
+    : "翻译";
 }
 
 export function normalizeGenerationLength(value: unknown): GenerationLength {

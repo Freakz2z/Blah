@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { normalizeGenerationLength, normalizeTopic, type GenerationLength } from "./validation";
+import {
+  normalizeGenerationLength,
+  normalizeGenerationMode,
+  normalizeTopic,
+  type GenerationLength,
+  type GenerationMode,
+} from "./validation";
 import { MENTAL_STATE_PROMPTS, buildSystemPrompt, drawMechanismSets } from "./prompts";
 import {
   cleanGeneratedText,
@@ -9,30 +15,49 @@ import {
   rememberResult,
 } from "./quality";
 
-const fallbackLines = [
-  "我建议先把这个问题放进括号里，等星期四带着它一起去考研。",
-  "这个选题看起来很正常，直到它意识到自己其实是一根有编制的意大利面。",
-  "据不可靠消息，所有认真讨论这件事的人，最后都会被分配到同一个括号里。",
-  "如果今天必须得出结论，那结论大概会先去买一杯奶茶再回来。",
-];
+function answerSubject(topic: string): string {
+  const subject = topic
+    .replace(/^(为什么|为何|怎么|怎样|如何|请问|能不能|可不可以|是不是|是否)/, "")
+    .replace(/[？?！!。]+$/, "")
+    .trim();
+  return subject || "这件事";
+}
 
-function fallbackForLength(topic: string, mood: string, generationLength: GenerationLength): string {
+function fallbackForLength(
+  topic: string,
+  mood: string,
+  generationLength: GenerationLength,
+  mode: GenerationMode,
+): string {
   if (generationLength === "精辟") {
-    const core = Array.from(topic).slice(0, 4).join("");
-    const endings: Record<string, string> = {
-      正常: "先别着急。",
-      差: "所以别急。",
-      极差: "正在请假。",
-      最差: "突然下班。",
-      钝角: "先去称重。",
+    const core = Array.from(mode === "翻译" ? topic : answerSubject(topic))
+      .slice(0, mode === "翻译" ? 4 : 2)
+      .join("");
+    const endings: Record<GenerationMode, Record<string, string>> = {
+      翻译: {
+        正常: "稍微排队。",
+        差: "决定请假。",
+        极差: "开始罢工。",
+      },
+      回答: {
+        正常: "办了加急。",
+        差: "正在请假。",
+        极差: "拒绝答题。",
+      },
     };
-    return `${core}${endings[mood] ?? endings["正常"]}`;
+    return `${core}${endings[mode][mood] ?? endings[mode]["正常"]}`;
   }
   if (generationLength === "中等") {
-    const core = Array.from(topic).slice(0, 6).join("");
-    return `${core}先别急着下结论，它正排队解释自己。`;
+    const core = Array.from(mode === "翻译" ? topic : answerSubject(topic))
+      .slice(0, mode === "翻译" ? 12 : 6)
+      .join("");
+    return mode === "翻译"
+      ? `原话里的${core}正在排队解释自己。`
+      : `${core}是因为时间给它办了加急。`;
   }
-  return fallbackLines[Math.floor(Math.random() * fallbackLines.length)];
+  return mode === "翻译"
+    ? `原话里的${topic}本来准备照常出现，走到句号门口却被通知逻辑今天轮休。`
+    : `${answerSubject(topic)}是因为时间给它办了加急，周末还在窗口排队补材料。`;
 }
 
 interface SamplingParams {
@@ -55,6 +80,7 @@ async function requestCompletion(
   apiKey: string,
   systemPrompt: string,
   topic: string,
+  mode: GenerationMode,
   params: SamplingParams,
 ): Promise<{ content: string; finishReason: string }> {
   const response = await fetch(endpoint, {
@@ -70,7 +96,7 @@ async function requestCompletion(
       stop: ["\n"],
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `选题：${topic}` },
+        { role: "user", content: `模式：${mode}\n输入：${topic}` },
       ],
     }),
     signal: AbortSignal.timeout(params.timeoutMs),
@@ -112,6 +138,7 @@ export async function POST(request: Request) {
     topic?: unknown;
     mood?: unknown;
     length?: unknown;
+    mode?: unknown;
   };
   const topic = normalizeTopic(body.topic);
   if (!topic) return NextResponse.json({ error: "invalid_topic" }, { status: 400 });
@@ -120,12 +147,14 @@ export async function POST(request: Request) {
       ? body.mood
       : "正常";
   const generationLength = normalizeGenerationLength(body.length);
+  const mode = normalizeGenerationMode(body.mode);
+  const historyTopic = `${mode}：${topic}`;
 
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) {
     console.warn("generate: DEEPSEEK_API_KEY is not set — serving a canned fallback line");
     await new Promise((resolve) => setTimeout(resolve, 520));
-    return NextResponse.json({ text: fallbackForLength(topic, mood, generationLength) });
+    return NextResponse.json({ text: fallbackForLength(topic, mood, generationLength, mode) });
   }
 
   const endpoint = process.env.DEEPSEEK_API_BASE ?? "https://api.deepseek.com/chat/completions";
@@ -142,8 +171,9 @@ export async function POST(request: Request) {
       requestCompletion(
         endpoint,
         apiKey,
-        buildSystemPrompt(mood, mechanisms, false, generationLength),
+        buildSystemPrompt(mood, mechanisms, false, generationLength, mode),
         topic,
+        mode,
         CANDIDATE_PARAMS[i],
       ),
     ),
@@ -157,7 +187,7 @@ export async function POST(request: Request) {
     }
     const text = acceptCompletion(result.value, topic, mood, generationLength, `candidate-${index}`);
     if (!text) return;
-    const similarity = recentSimilarity(topic, mood, text);
+    const similarity = recentSimilarity(historyTopic, mood, text);
     if (similarity > 0.5) {
       console.warn(`generate candidate-${index}: rejected too_similar`);
       return;
@@ -183,12 +213,13 @@ export async function POST(request: Request) {
       const retry = await requestCompletion(
         endpoint,
         apiKey,
-        buildSystemPrompt(mood, [draw.retry], true, generationLength),
+        buildSystemPrompt(mood, [draw.retry], true, generationLength, mode),
         topic,
+        mode,
         RETRY_PARAMS,
       );
       const retryText = acceptCompletion(retry, topic, mood, generationLength, "retry");
-      if (retryText && recentSimilarity(topic, mood, retryText) <= 0.5) text = retryText;
+      if (retryText && recentSimilarity(historyTopic, mood, retryText) <= 0.5) text = retryText;
     } catch (error) {
       console.warn("generate retry: upstream failure", error);
     }
@@ -198,8 +229,10 @@ export async function POST(request: Request) {
   // 4–8-character window even after a strict retry. Preserve the interaction
   // contract with a topic- and mood-aware concise fallback instead of showing
   // an opaque failure to the user.
-  if (!text && generationLength === "精辟") text = fallbackForLength(topic, mood, generationLength);
+  if (!text && generationLength === "精辟") {
+    text = fallbackForLength(topic, mood, generationLength, mode);
+  }
   if (!text) return NextResponse.json({ error: "generation_failed" }, { status: 502 });
-  rememberResult(topic, mood, text);
+  rememberResult(historyTopic, mood, text);
   return NextResponse.json({ text });
 }

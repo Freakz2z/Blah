@@ -32,8 +32,6 @@ const STOPWORDS = new Set([
 
 const CAUSAL_WORDS = ["所以", "因此", "于是", "既然", "说明", "难怪", "导致", "证明", "毕竟", "从而", "可见"];
 const JUMP_WORDS = ["突然", "后来", "顺便", "然后", "接着", "直到", "转头"];
-const EARNEST_WORDS = ["我试过", "我查了", "应该", "大概", "其实", "按照", "认真算"];
-
 /** Surface markers per mechanism — scores a candidate's compliance with the
  * mechanisms it was actually assigned (a shared causal-word table would
  * systematically favor whichever candidate drew 错误因果). */
@@ -124,9 +122,10 @@ export type InvalidReason =
 export function validateGeneratedText(
   text: string,
   topic: string,
-  mood = "正常",
+  _mood = "正常",
   generationLength: GenerationLength = "正常",
 ): InvalidReason | null {
+  void _mood; // Kept in the positional API for existing callers.
   const chars = Array.from(text);
   const length = chars.length;
   const topicChars = new Set(Array.from(topic));
@@ -147,10 +146,6 @@ export function validateGeneratedText(
   for (const word of HARD_LEAK_WORDS) {
     if (text.includes(word) && !topic.includes(word)) return "leak";
   }
-  // 「不写出钝角二字」only exists in the 钝角 tier prompt; in other moods the
-  // word is ordinary geometry vocabulary.
-  if (mood === "钝角" && text.includes("钝角") && !topic.includes("钝角")) return "leak";
-
   if (new Set(chars).size / length < 0.55) return "repetition";
   if (/(.)\1{3,}/u.test(text)) return "repetition";
   if (hasRepeatedGram(chars, 4, 3, topic) || hasRepeatedGram(chars, 6, 2, topic)) {
@@ -259,8 +254,7 @@ function mechanismScore(text: string, mood: string, mechanisms: string[]): numbe
   // …plus a small tier-voice bonus that is symmetric across both candidates.
   let tier = 0;
   if (mood === "正常" || mood === "差") tier = sum(CAUSAL_WORDS, 2, 4);
-  else if (mood === "极差" || mood === "最差") tier = sum(JUMP_WORDS, 2, 4);
-  else if (mood === "钝角") tier = sum(EARNEST_WORDS, 2, 4);
+  else if (mood === "极差") tier = sum(JUMP_WORDS, 2, 4);
   return assigned + tier;
 }
 

@@ -3,14 +3,13 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 /* ── Constants ─────────────────────────────────── */
-const MOODS = ["钝角", "最差", "极差", "差", "正常"];
+const MODES = ["翻译", "回答"] as const;
+const MOODS = ["极差", "差", "正常"];
 const LENGTH_OPTIONS = ["精辟", "中等", "正常"] as const;
-const THINKING_STEPS = [
-  "正在理解选题",
-  "正在建立不必要的联系",
-  "正在强行得出结论",
-  "结论有点烫，正在吹凉",
-];
+const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
+  翻译: ["正在拆解原话", "正在替换正常逻辑", "正在校对胡言乱语", "译文有点烫，正在吹凉"],
+  回答: ["正在理解问题", "正在建立不必要的联系", "正在强行得出答案", "答案有点烫，正在吹凉"],
+};
 const MAX_CHARS = 30;
 
 const CANVAS_SERIF =
@@ -21,7 +20,8 @@ const CANVAS_SANS =
 /* ── Component ─────────────────────────────────── */
 export default function Home() {
   const [topic, setTopic] = useState("");
-  const [mood, setMood] = useState(4); /* "正常" — last index */
+  const [mode, setMode] = useState<(typeof MODES)[number]>("翻译");
+  const [mood, setMood] = useState(2); /* "正常" — last index */
   const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]>("正常");
   const [result, setResult] = useState("");
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
@@ -47,11 +47,11 @@ export default function Home() {
     )
       return;
     const timer = window.setInterval(
-      () => setThinkingStep((s) => Math.min(s + 1, THINKING_STEPS.length - 1)),
+      () => setThinkingStep((s) => Math.min(s + 1, THINKING_STEPS[mode].length - 1)),
       1200,
     );
     return () => window.clearInterval(timer);
-  }, [status]);
+  }, [status, mode]);
 
   /* feedback timer cleanup */
   useEffect(
@@ -110,14 +110,14 @@ export default function Home() {
 
       if (!clean) {
         setStatus("error");
-        setMessage("先给这次胡言乱语定个选题。");
+        setMessage(mode === "翻译" ? "先输入一句要翻译的话。" : "先输入一个要回答的问题。");
         inputRef.current?.focus();
         return;
       }
 
       if (clean.length > MAX_CHARS) {
         setStatus("error");
-        setMessage(`选题有点长，控制在 ${MAX_CHARS} 个字以内。`);
+        setMessage(`输入有点长，控制在 ${MAX_CHARS} 个字以内。`);
         return;
       }
 
@@ -134,7 +134,12 @@ export default function Home() {
         const response = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: clean, mood: MOODS[mood], length: generationLength }),
+          body: JSON.stringify({
+            topic: clean,
+            mode,
+            mood: MOODS[mood],
+            length: generationLength,
+          }),
           signal: controller.signal,
         });
 
@@ -170,7 +175,7 @@ export default function Home() {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [topic, mood, generationLength, status],
+    [topic, mode, mood, generationLength, status],
   );
 
   /* ── Copy — clipboard API with execCommand fallback ── */
@@ -266,7 +271,7 @@ export default function Home() {
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     ctx.fillText(
-      `「${topic.trim()}」·精神状态：${MOODS[mood]}`,
+      `${mode}「${topic.trim()}」·精神状态：${MOODS[mood]}`,
       padding,
       footerTop + footerHeight / 2,
     );
@@ -280,11 +285,11 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `胡言乱语-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}-${MOODS[mood]}.png`;
+    a.download = `胡言乱语-${mode}-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}-${MOODS[mood]}.png`;
     a.click();
     URL.revokeObjectURL(url);
     finish("saved");
-  }, [result, saveState, topic, mood]);
+  }, [result, saveState, topic, mode, mood]);
 
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
@@ -301,7 +306,7 @@ export default function Home() {
         <header className="site-header">
           <div className="site-title">
             <h1>胡言乱语生成器</h1>
-            <p className="subtitle">根据你当前的精神状态，认真说一句废话。</p>
+            <p className="subtitle">翻译你的话，或者认真回答它。</p>
           </div>
           <button
             className="theme-toggle"
@@ -321,11 +326,54 @@ export default function Home() {
 
         {/* ── Main Content ──────────────────────── */}
         <div className="main-content">
-          {/* Topic */}
+          {/* Mode */}
+          <fieldset className="mode-block" disabled={status === "thinking"}>
+            <legend className="micro-label">模式</legend>
+            <div className="mode-options" role="radiogroup" aria-label="生成模式">
+              {MODES.map((value, index) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  className={`mode-option${mode === value ? " active" : ""}`}
+                  aria-checked={mode === value}
+                  tabIndex={mode === value ? 0 : -1}
+                  onClick={() => {
+                    setMode(value);
+                    setResult("");
+                    setStatus("idle");
+                    setMessage("");
+                  }}
+                  onKeyDown={(event) => {
+                    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                      ? 1
+                      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                        ? -1
+                        : 0;
+                    if (!direction) return;
+                    event.preventDefault();
+                    const nextIndex = (index + direction + MODES.length) % MODES.length;
+                    setMode(MODES[nextIndex]);
+                    setResult("");
+                    setStatus("idle");
+                    const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
+                    options?.[nextIndex]?.focus();
+                  }}
+                >
+                  <span>{value}</span>
+                  <small>{value === "翻译" ? "把原话变胡话" : "用胡话作答"}</small>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {/* Input */}
           <form id="gen-form" className="generator-form" onSubmit={generate}>
             <div className="field-block">
               <div className="field-label-row">
-                <label htmlFor="topic" className="micro-label">选题</label>
+                <label htmlFor="topic" className="micro-label">
+                  {mode === "翻译" ? "原话" : "问题"}
+                </label>
                 <span
                   id="char-count"
                   role="status"
@@ -342,7 +390,7 @@ export default function Home() {
                 value={topic}
                 maxLength={MAX_CHARS + 1}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="输入选题"
+                placeholder={mode === "翻译" ? "输入一句话" : "输入一个问题"}
                 autoComplete="off"
                 spellCheck={false}
                 aria-describedby="char-count"
@@ -451,9 +499,9 @@ export default function Home() {
             type="submit"
             form="gen-form"
             aria-disabled={!canGenerate || undefined}
-            aria-label={status === "thinking" ? "正在生成……" : "开始胡言乱语"}
+            aria-label={status === "thinking" ? `正在${mode}……` : `开始${mode}`}
           >
-            <span>{status === "thinking" ? "正在生成……" : "开始胡言乱语"}</span>
+            <span>{status === "thinking" ? `正在${mode}……` : `开始${mode}`}</span>
             <span className="btn-hint" aria-hidden="true">
               {status === "thinking" ? "" : "↵"}
             </span>
@@ -469,7 +517,7 @@ export default function Home() {
               <div className="thinking-indicator">
                 <span className="thinking-dot" aria-hidden="true" />
                 <span key={thinkingStep} className="thinking-text">
-                  {THINKING_STEPS[thinkingStep]}
+                  {THINKING_STEPS[mode][thinkingStep]}
                 </span>
               </div>
             )}

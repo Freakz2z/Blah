@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
-const description = "根据你当前的精神状态，认真说一句废话。";
+const description = "把你的话翻译成胡言乱语，或者直接用胡言乱语回答。";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://blah.freakz2z.com"),
