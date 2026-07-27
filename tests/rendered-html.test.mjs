@@ -41,13 +41,14 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /主题设置/);
   assert.match(html, /模式设置/);
   assert.doesNotMatch(html, /theme-toggle/);
+  assert.doesNotMatch(html, /翻译你的话，或者认真回答它。/);
 
   // Mode controls
   assert.match(html, /生成模式/);
   assert.match(html, /翻译/);
   assert.match(html, /回答/);
-  assert.match(html, /把原话变胡话/);
-  assert.match(html, /用胡话作答/);
+  assert.doesNotMatch(html, /把原话变成?胡话/);
+  assert.doesNotMatch(html, /用胡话(?:回答|作答)/);
 
   // Text input
   assert.match(html, /<label\s[^>]*for="topic"[^>]*>/i);
@@ -57,15 +58,13 @@ test("renders the nonsense generator page", async () => {
   // Char count — RSC wraps text segments with comment markers
   assert.match(html, /0<!.*?\/.*?30</);
 
-  // Mood slider — 3 states
-  assert.match(html, /role="slider"/);
-  assert.match(html, /aria-valuetext/);
+  // Mood buttons — 3 states
+  assert.match(html, /mood-options/);
   assert.match(html, /极差/);
   assert.match(html, /差/);
   assert.match(html, /正常/);
   assert.doesNotMatch(html, /钝角/);
   assert.doesNotMatch(html, /最差/);
-  assert.match(html, /aria-valuenow="2"/);
 
   // Generation-length controls
   assert.match(html, /生成长度/);
@@ -82,8 +81,7 @@ test("renders the nonsense generator page", async () => {
   // Result section
   assert.match(html, /等一句没有用的话/);
 
-  // Mood slider track
-  assert.match(html, /mood-track/);
+  assert.doesNotMatch(html, /mood-track/);
 
   // No skeleton / AI demo patterns
   assert.doesNotMatch(html, /react-loading-skeleton/);
@@ -126,7 +124,8 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   assert.match(cssContent, /\.mood-/);
   assert.match(cssContent, /\.result-section/);
   assert.match(cssContent, /\.primary-button/);
-  assert.match(cssContent, /\.mood-track/);
+  assert.match(cssContent, /\.mood-options/);
+  assert.match(cssContent, /\.mood-option/);
   assert.match(cssContent, /prefers-reduced-motion/);
   assert.match(cssContent, /prefers-color-scheme:\s*dark/);
 });

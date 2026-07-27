@@ -35,13 +35,11 @@ export default function Home() {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [animKey, setAnimKey] = useState(0);
-  const [dragging, setDragging] = useState(false);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const trackRef = useRef<HTMLDivElement>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
@@ -103,31 +101,6 @@ export default function Home() {
       document.removeEventListener("pointerdown", closeOnOutsideClick);
     };
   }, [settingsOpen]);
-
-  /* ── Slider logic ────────────────────────────── */
-  const getMoodFromPosition = useCallback((clientX: number) => {
-    const track = trackRef.current;
-    if (!track) return mood;
-    const rect = track.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return Math.round(ratio * (MOODS.length - 1));
-  }, [mood]);
-
-  const handleTrackPointerDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
-    setDragging(true);
-    setMood(getMoodFromPosition(e.clientX));
-  }, [getMoodFromPosition]);
-
-  const handleTrackPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragging) return;
-    setMood(getMoodFromPosition(e.clientX));
-  }, [dragging, getMoodFromPosition]);
-
-  const handleTrackPointerUp = useCallback(() => {
-    setDragging(false);
-  }, []);
 
   /* ── Generate ────────────────────────────────── */
   const generate = useCallback(
@@ -323,8 +296,6 @@ export default function Home() {
   const isOverLimit = topic.length > MAX_CHARS;
   const canGenerate = status !== "thinking";
   const hasResult = result !== "";
-  const maxIndex = MOODS.length - 1;
-  const fillPercent = (mood / maxIndex) * 100;
 
   /* ── Render ──────────────────────────────────── */
   return (
@@ -334,7 +305,6 @@ export default function Home() {
         <header className="site-header">
           <div className="site-title">
             <h1>胡言乱语生成器</h1>
-            <p className="subtitle">翻译你的话，或者认真回答它。</p>
           </div>
           <button
             ref={settingsButtonRef}
@@ -439,80 +409,42 @@ export default function Home() {
                       }}
                     >
                       <span>{value}</span>
-                      <small>{value === "翻译" ? "把原话变胡话" : "用胡话作答"}</small>
                     </button>
                   ))}
                 </div>
               </fieldset>
 
-              <div className={`mood-block${status === "thinking" ? " disabled" : ""}`}>
-                <div className="mood-label-row">
-                  <span className="mood-label micro-label">精神状态</span>
+              <fieldset className="mood-block" disabled={status === "thinking"}>
+                <legend className="micro-label">精神状态</legend>
+                <div className="mood-options" role="radiogroup" aria-label="精神状态">
+                  {MOODS.map((value, index) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      className={`mood-option${mood === index ? " active" : ""}`}
+                      aria-checked={mood === index}
+                      tabIndex={mood === index ? 0 : -1}
+                      onClick={() => setMood(index)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + MOODS.length) % MOODS.length;
+                        setMood(nextIndex);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mood-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      {value}
+                    </button>
+                  ))}
                 </div>
-
-                <div
-                  ref={trackRef}
-                  className={`mood-track${dragging ? " dragging" : ""}`}
-                  role="slider"
-                  aria-label="精神状态"
-                  aria-valuemin={0}
-                  aria-valuemax={maxIndex}
-                  aria-valuenow={mood}
-                  aria-valuetext={MOODS[mood]}
-                  aria-disabled={status === "thinking"}
-                  tabIndex={status === "thinking" ? -1 : 0}
-                  onPointerDown={(event) => {
-                    if (status !== "thinking") handleTrackPointerDown(event);
-                  }}
-                  onPointerMove={(event) => {
-                    if (status !== "thinking") handleTrackPointerMove(event);
-                  }}
-                  onPointerUp={handleTrackPointerUp}
-                  onPointerCancel={handleTrackPointerUp}
-                  onKeyDown={(e) => {
-                    if (status === "thinking") return;
-                    if (e.key === "ArrowLeft" || e.key === "ArrowDown" || e.key === "PageDown") {
-                      e.preventDefault();
-                      setMood(Math.max(0, mood - 1));
-                    } else if (e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "PageUp") {
-                      e.preventDefault();
-                      setMood(Math.min(maxIndex, mood + 1));
-                    } else if (e.key === "Home") {
-                      e.preventDefault();
-                      setMood(0);
-                    } else if (e.key === "End") {
-                      e.preventDefault();
-                      setMood(maxIndex);
-                    }
-                  }}
-                >
-                  <div
-                    className="mood-track-fill"
-                    style={{ width: `calc(${fillPercent} / 100 * (100% - 14px))` }}
-                  />
-                  <div className="mood-labels">
-                    {MOODS.map((label, i) => (
-                      <button
-                        key={label}
-                        type="button"
-                        tabIndex={-1}
-                        aria-hidden="true"
-                        className={`mood-label-item${mood === i ? " active" : ""}`}
-                        style={{ left: `${(i / maxIndex) * 100}%` }}
-                        onClick={() => {
-                          if (status !== "thinking") setMood(i);
-                        }}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div
-                    className="mood-thumb"
-                    style={{ left: `calc(7px + ${fillPercent} / 100 * (100% - 14px))` }}
-                  />
-                </div>
-              </div>
+              </fieldset>
 
               <fieldset className="length-block" disabled={status === "thinking"}>
                 <legend className="micro-label">生成长度</legend>

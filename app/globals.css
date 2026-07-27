@@ -148,8 +148,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 /* ── Apocalypse text corruption ────────────────── */
 .mood-0 .site-header h1,
 .mood-0 .empty-message,
-.mood-0 .field-label-row label,
-.mood-0 .mood-label {
+.mood-0 .field-label-row label {
   animation: text-corrupt 300ms steps(3) infinite;
 }
 
@@ -171,20 +170,10 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   opacity: 0.5;
 }
 
-/* ── Apocalypse slider ─────────────────────────── */
-.mood-0 .mood-track::before,
-.mood-0 .mood-track-fill {
-  background: var(--chaos);
-}
-
-.mood-0 .mood-thumb::after {
-  background: var(--chaos);
-  box-shadow: 0 0 20px var(--chaos), 0 0 40px var(--chaos);
-  animation: apocalypse-wobble 120ms steps(3) infinite;
-}
-
-.mood-0 .mood-label-item.active {
+/* ── Apocalypse mood option ────────────────────── */
+.mood-0 .mood-option.active {
   color: var(--chaos);
+  box-shadow: inset 0 -2px 0 var(--chaos);
   animation: text-corrupt 200ms steps(3) infinite;
 }
 
@@ -268,22 +257,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .site-title { grid-column: 2; }
 
 .site-header h1 {
-  margin: 0 0 8px;
+  margin: 0;
   font-family: var(--font-serif);
   font-size: clamp(24px, 4vw, 32px);
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: var(--ls-tight);
   color: var(--fg);
-}
-
-.subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--fg-muted);
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: var(--ls-base);
 }
 
 /* ── Settings ──────────────────────────────────── */
@@ -459,9 +439,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .mode-option {
   min-height: 48px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 8px;
   color: var(--fg-muted);
   transition: color 160ms ease, background-color 160ms ease;
 }
@@ -474,11 +453,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-size: 15px;
   font-weight: 700;
   letter-spacing: var(--ls-wide);
-}
-
-.mode-option small {
-  font-size: 10px;
-  letter-spacing: var(--ls-tight);
 }
 
 .mode-option:hover,
@@ -545,116 +519,44 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   border-bottom-color: var(--fg);
 }
 
-/* ── Mood Slider ───────────────────────────────── */
-.mood-block { flex-shrink: 0; }
-.mood-block.disabled { opacity: 0.5; }
-.mood-block.disabled .mood-track { cursor: default; }
-
-.mood-label-row {
-  display: flex;
-  align-items: baseline;
-  margin-bottom: 10px;
+/* ── Mood Options ──────────────────────────────── */
+.mood-block {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  flex-shrink: 0;
 }
 
-.mood-track {
-  position: relative;
-  height: 44px;
-  cursor: grab;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  margin-top: 14px;
+.mood-block > .micro-label { margin-bottom: 10px; }
+
+.mood-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
 }
 
-.mood-track.dragging { cursor: grabbing; }
-
-/* background rail — inset 7px so the 14px thumb never overhangs the ends */
-.mood-track::before {
-  content: "";
-  position: absolute;
-  top: 8px;
-  left: 7px;
-  right: 7px;
-  height: 2px;
-  background: var(--fg);
-  opacity: 0.3;
-}
-
-/* active fill */
-.mood-track-fill {
-  position: absolute;
-  top: 8px;
-  left: 7px;
-  height: 2px;
-  background: var(--fg);
-  transition: width 140ms cubic-bezier(0.33, 1, 0.68, 1);
-  pointer-events: none;
-}
-
-/* mood labels */
-.mood-labels {
-  position: absolute;
-  top: 18px;
-  left: 0;
-  right: 0;
-  pointer-events: none;
-}
-
-.mood-label-item {
-  position: absolute;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  font-size: 11px;
-  font-weight: 500;
+.mood-option {
+  min-height: 42px;
   color: var(--fg-muted);
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: var(--ls-base);
-  transition: color 180ms ease;
-  pointer-events: auto;
-  padding: 8px 6px;
-  margin: -8px -6px;
+  transition: color 160ms ease, background-color 160ms ease;
 }
 
-/* endpoint labels align flush with the track ends */
-.mood-label-item:first-child { transform: none; }
-.mood-label-item:last-child { transform: translateX(-100%); }
-
-.mood-label-item.active { color: var(--fg); }
-
-/* thumb */
-.mood-thumb {
-  position: absolute;
-  top: 0;
-  width: 28px;
-  height: 18px;
-  transform: translateX(-50%);
-  transition: left 140ms cubic-bezier(0.33, 1, 0.68, 1);
-  pointer-events: none;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.mood-option + .mood-option {
+  border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
 }
 
-.mood-track.dragging .mood-thumb,
-.mood-track.dragging .mood-track-fill { transition-duration: 60ms; }
-
-.mood-thumb::after {
-  content: "";
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fg);
-  transition: transform 60ms ease-out, box-shadow 200ms ease;
+.mood-option:hover,
+.mood-option.active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
-/* mood-specific thumb behavior */
-.mood-0 .mood-thumb::after { transform: scale(1.45); animation: wobble 160ms ease-in-out infinite; }
-.mood-1 .mood-thumb::after { transform: scale(1.18); animation: wobble 420ms ease-in-out infinite; }
-.mood-2 .mood-thumb::after { transform: scale(1); animation: none; }
-
-.mood-track.dragging .mood-thumb::after { transform: scale(1.25); }
-.mood-0 .mood-track.dragging .mood-thumb::after { transform: scale(1.6); }
+.mood-option:focus-visible { outline-offset: -3px; }
+.mood-block:disabled .mood-option { cursor: default; opacity: 0.5; }
 
 /* ── Generation Length ────────────────────────── */
 .length-block {
@@ -869,12 +771,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   from { opacity: 0; transform: translateY(3px); }
 }
 
-@keyframes wobble {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-2px); }
-  75% { transform: translateX(2px); }
-}
-
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(16px); filter: blur(2px); }
   to   { opacity: 1; transform: translateY(0); filter: blur(0); }
@@ -934,14 +830,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   50% { opacity: 0.75; }
 }
 
-@keyframes apocalypse-wobble {
-  0%   { transform: translate(-4px, -2px); }
-  25%  { transform: translate(3px, 1px); }
-  50%  { transform: translate(-2px, -3px); }
-  75%  { transform: translate(4px, 0px); }
-  100% { transform: translate(-3px, 2px); }
-}
-
 @keyframes chaos-rise {
   0%   { opacity: 0; transform: translateY(20px) scale(0.95); filter: blur(8px) hue-rotate(0deg); }
   20%  { opacity: 0.6; transform: translateY(-5px) scale(1.02); filter: blur(2px) hue-rotate(20deg); }
@@ -991,6 +879,5 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   .settings-content { gap: 18px; padding-top: 16px; }
   .settings-header { min-height: 48px; }
   .primary-button { height: 44px; font-size: 14px; }
-  .mood-track { height: 34px; }
   .result-text { font-size: 18px; }
 }
