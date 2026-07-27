@@ -2,6 +2,8 @@
  * and prompt assembly. Run via `node --test --experimental-strip-types`. */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   cleanGeneratedText,
@@ -12,7 +14,6 @@ import {
   rememberResult,
 } from "../app/api/generate/quality.ts";
 import {
-  COMMON_PROMPT,
   COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
   MENTAL_STATE_PROMPTS,
@@ -20,6 +21,9 @@ import {
   GENERATION_LENGTH_PROMPTS,
   MECHANISM_HINTS,
   TIER_MECHANISMS,
+  SKILL_SHA256,
+  SKILL_SOURCE,
+  buildRuntimePrompt,
   buildSystemPrompt,
   drawMechanismSets,
 } from "../app/api/generate/prompts.ts";
@@ -186,16 +190,50 @@ test("drawMechanismSets keeps candidates disjoint and inside the tier whitelist"
 
 test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts", () => {
   const prompt = buildSystemPrompt("极差", ["情绪实体化"], false, "正常", "回答");
-  assert.ok(prompt.startsWith(COMMON_PROMPT));
+  assert.ok(prompt.startsWith(SKILL_SOURCE));
+  assert.match(prompt, /# 本次网站运行配置（最高优先级）/);
   assert.ok(prompt.includes(MODE_PROMPTS["回答"]));
-  assert.ok(!prompt.includes(MODE_PROMPTS["翻译"]));
   assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["极差"]));
   assert.ok(prompt.includes(MECHANISM_HINTS["情绪实体化"]));
   assert.match(prompt, /问题「为什么周一来得这么快」/);
-  assert.ok(!prompt.includes("严格执行"));
+  assert.ok(!prompt.endsWith("写完立即停止。"));
   assert.ok(buildSystemPrompt("极差", ["情绪实体化"], true).includes("严格执行"));
   assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
   assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
+});
+
+test("compiled Skill is fresh and included verbatim in every website prompt", () => {
+  const source = readFileSync(
+    new URL("../skills/blahblah-generator/SKILL.md", import.meta.url),
+    "utf8",
+  );
+  assert.equal(SKILL_SOURCE, source);
+  assert.equal(createHash("sha256").update(source).digest("hex"), SKILL_SHA256);
+});
+
+test("runtime appendix preserves representative pre-Skill prompt hashes", () => {
+  const cases = [
+    {
+      args: ["正常", ["错误因果"], false, "正常", "翻译"],
+      hash: "25a0aa85c6aec8971f69a04265f3ba1a9a5d3f939f2178f9d3bfc8e197ccbbcf",
+    },
+    {
+      args: ["极差", ["情绪实体化"], false, "正常", "回答"],
+      hash: "5da2dfeb79a8f6670d0864ace16eb96dd2f0ccdeccc734ea33d954660870bd52",
+    },
+    {
+      args: ["正常", ["错误因果"], false, "精辟", "翻译"],
+      hash: "20240cfb756a57ee84c2c542be74cc74dd0ff05257db123f3343fdcca2fc83a9",
+    },
+    {
+      args: ["差", ["错误因果"], true, "中等", "回答"],
+      hash: "fb38d2d05cec27ea2d7863e13dbb31fc5ce0f55f2e3040cf2a888b116e1539f1",
+    },
+  ];
+  for (const { args, hash } of cases) {
+    const prompt = buildRuntimePrompt(...args);
+    assert.equal(createHash("sha256").update(prompt).digest("hex"), hash);
+  }
 });
 
 test("normalizeTopic trims and enforces the 30-codepoint limit", () => {

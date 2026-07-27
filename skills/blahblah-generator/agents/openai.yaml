@@ -1,0 +1,4 @@
+interface:
+  display_name: "胡言乱语生成器"
+  short_description: "在翻译和回答模式中生成可辨认、通顺且意外的中文胡话"
+  default_prompt: "Use $blahblah-generator to translate my sentence into Chinese nonsense or answer it with nonsense."

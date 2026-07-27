@@ -70,6 +70,26 @@ Cloudflare Secret `OLLAMA_API_KEY`；可用 `OLLAMA_MODEL` 覆盖模型名，
 或将 `MODEL_PROVIDER` 设为 `deepseek` 临时切回原供应商。新密钥尚未配置时，
 服务会自动使用已有的 `DEEPSEEK_API_KEY`，避免生成接口中断。
 
+完整生成规则现在由
+[`skills/blahblah-generator/SKILL.md`](skills/blahblah-generator/SKILL.md)
+统一维护。开发和构建命令会先把整个 Skill 编译进 Worker；不要在
+`app/api/generate/prompts.ts` 中另建提示词副本。
+
+社区用户可直接使用 Skill 原生生成，也可通过附带脚本调用线上质量管线：
+
+```bash
+node skills/blahblah-generator/scripts/generate.mjs \
+  --mode 翻译 --mood 正常 --length 正常 "我今天不想上班"
+```
+
+安装到不同宿主：
+
+```bash
+node skills/blahblah-generator/scripts/install.mjs codex
+node skills/blahblah-generator/scripts/install.mjs claude
+node skills/blahblah-generator/scripts/install.mjs openclaw
+```
+
 ```bash
 npm run dev         # 本地开发
 npm run build       # 生产构建

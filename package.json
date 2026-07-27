@@ -6,11 +6,12 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "prepare:skill": "node skills/blahblah-generator/scripts/compile.mjs",
+    "dev": "npm run prepare:skill && WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "build": "npm run prepare:skill && WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
+    "start": "npm run prepare:skill && WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test --experimental-strip-types tests/*.test.mjs",
-    "test:unit": "node --test --experimental-strip-types tests/generation-quality.test.mjs",
+    "test:unit": "npm run prepare:skill && node --test --experimental-strip-types tests/generation-quality.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
