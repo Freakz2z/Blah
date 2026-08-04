@@ -47,7 +47,7 @@ test("renders the nonsense generator page", async () => {
   assert.doesNotMatch(html, /翻译你的话，或者认真回答它。/);
 
   // Mode controls
-  assert.match(html, /生成模式/);
+  assert.match(html, /<legend class="visually-hidden">生成模式<\/legend>/);
   assert.match(html, /翻译/);
   assert.match(html, /回答/);
   assert.doesNotMatch(html, /把原话变成?胡话/);
@@ -55,6 +55,7 @@ test("renders the nonsense generator page", async () => {
 
   // Text input
   assert.match(html, /<label\s[^>]*for="topic"[^>]*>/i);
+  assert.match(html, /class="visually-hidden">原话<\/label>/);
   assert.match(html, /id="topic"/);
   assert.match(html, /placeholder="输入一句话"/);
 
@@ -67,7 +68,7 @@ test("renders the nonsense generator page", async () => {
   assert.doesNotMatch(html, /最差/);
 
   // Generation-length controls
-  assert.match(html, /生成长度/);
+  assert.match(html, /<legend class="visually-hidden">生成长度<\/legend>/);
   assert.match(html, /role="radiogroup"/);
   assert.match(html, /role="radio"/);
   assert.match(html, /精辟/);

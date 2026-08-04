@@ -610,7 +610,7 @@ export default function Home() {
           <form id="gen-form" className="generator-form" onSubmit={generate}>
             <div className="field-block">
               <div className="field-label-row">
-                <label htmlFor="topic" className="micro-label">
+                <label htmlFor="topic" className="visually-hidden">
                   {mode === "翻译" ? "原话" : "问题"}
                 </label>
                 <span
@@ -640,7 +640,7 @@ export default function Home() {
 
           <div className="main-options">
             <fieldset className="mode-block" disabled={status === "thinking"}>
-              <legend className="micro-label">生成模式</legend>
+              <legend className="visually-hidden">生成模式</legend>
               <div className="mode-options" role="radiogroup" aria-label="生成模式">
                 {MODES.map((value, index) => (
                   <button
@@ -679,7 +679,7 @@ export default function Home() {
             </fieldset>
 
             <fieldset className="length-block" disabled={status === "thinking"}>
-              <legend className="micro-label">生成长度</legend>
+              <legend className="visually-hidden">生成长度</legend>
               <div className="length-options" role="radiogroup" aria-label="生成长度">
                 {LENGTH_OPTIONS.map((value, index) => (
                   <button
