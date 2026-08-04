@@ -315,6 +315,28 @@ test("fallback quality floor covers common inputs without mechanical fragments",
   assert.equal(fallbackForLength("我今天不想上班", "正常", "精辟", "翻译"), "工位替我上班。");
 });
 
+test("fallback keeps answer mode valid for statements, inline questions, and short Latin topics", () => {
+  const cases = [
+    ["回答", "我想喝奶茶"],
+    ["回答", "ChatGPT为什么这么慢"],
+    ["回答", "明天要不要开会"],
+    ["回答", "什么是快乐"],
+    ["翻译", "ChatGPT"],
+    ["回答", "a"],
+  ];
+
+  for (const [mode, topic] of cases) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topic, "正常", length, mode);
+      assert.equal(
+        validateGeneratedText(text, topic, "正常", length, mode),
+        null,
+        `${mode}/${length}: ${text}`,
+      );
+    }
+  }
+});
+
 test("normal translation fallback joins after source punctuation cleanly", () => {
   const text = fallbackForLength("外面下雨了，我忘记带伞。", "极差", "正常", "翻译");
   assert.equal(text.includes("。，"), false);

@@ -9,6 +9,7 @@ import {
   serializeHistory,
   type GenerationHistoryItem,
 } from "./history";
+import { generateStandaloneText } from "./toy-local-generator";
 
 /* ── Constants ─────────────────────────────────── */
 const MODES = ["翻译", "回答"] as const;
@@ -30,6 +31,12 @@ const CANVAS_SANS =
   "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
 
 type UsageStats = { generations: number };
+const TOY_STATS_STORAGE_KEY = "blahblah:toy-generation-count:v1";
+
+type BlahBlahRuntimeWindow = Window & {
+  __BLAHBLAH_API_BASE__?: string;
+  __BLAHBLAH_STANDALONE_TOY__?: boolean;
+};
 
 const STAT_FORMATTER = new Intl.NumberFormat("zh-CN");
 const HISTORY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
@@ -49,10 +56,32 @@ function formatHistoryTime(timestamp: number): string {
 
 function appApiUrl(path: string): string {
   if (typeof window === "undefined") return path;
-  const configuredBase = (
-    window as Window & { __BLAHBLAH_API_BASE__?: string }
-  ).__BLAHBLAH_API_BASE__ ?? "";
+  const configuredBase = (window as BlahBlahRuntimeWindow).__BLAHBLAH_API_BASE__ ?? "";
   return `${configuredBase.replace(/\/+$/, "")}${path}`;
+}
+
+function isStandaloneToy(): boolean {
+  return typeof window !== "undefined" &&
+    Boolean((window as BlahBlahRuntimeWindow).__BLAHBLAH_STANDALONE_TOY__);
+}
+
+function readStandaloneGenerationCount(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(TOY_STATS_STORAGE_KEY) ?? "0");
+    return Number.isSafeInteger(stored) && stored >= 0 ? stored : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function incrementStandaloneGenerationCount(): number {
+  const next = readStandaloneGenerationCount() + 1;
+  try {
+    window.localStorage.setItem(TOY_STATS_STORAGE_KEY, String(next));
+  } catch {
+    // Private browsing and full storage must not block local generation.
+  }
+  return next;
 }
 
 function createHistoryId(): string {
@@ -93,6 +122,13 @@ export default function Home() {
 
   const loadStats = useCallback(async () => {
     const requestId = ++statsRequestRef.current;
+    if (isStandaloneToy()) {
+      if (requestId === statsRequestRef.current) {
+        setStats({ generations: readStandaloneGenerationCount() });
+      }
+      return;
+    }
+
     try {
       const response = await fetch(appApiUrl("/api/stats"), { cache: "no-store" });
       if (!response.ok) throw new Error("stats_unavailable");
@@ -247,42 +283,58 @@ export default function Home() {
       setCopyState("idle");
 
       try {
-        const response = await fetch(appApiUrl("/api/generate"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            topic: clean,
-            mode,
-            length: generationLength,
-          }),
-          signal: controller.signal,
-        });
+        const standaloneToy = isStandaloneToy();
+        let generatedText = "";
 
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => ({}))) as { error?: string };
-          if (payload.error === "rate_limited") {
-            throw new Error(`rate_limited:${response.headers.get("Retry-After") ?? ""}`);
+        if (standaloneToy) {
+          // Preserve the small thinking beat without introducing a network
+          // request into the static Toy package.
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
+          if (controller.signal.aborted) return;
+          generatedText = generateStandaloneText(clean, mode, generationLength).trim();
+        } else {
+          const response = await fetch(appApiUrl("/api/generate"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              topic: clean,
+              mode,
+              length: generationLength,
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const payload = (await response.json().catch(() => ({}))) as { error?: string };
+            if (payload.error === "rate_limited") {
+              throw new Error(`rate_limited:${response.headers.get("Retry-After") ?? ""}`);
+            }
+            throw new Error(payload.error ?? "upstream");
           }
-          throw new Error(payload.error ?? "upstream");
+          const data = (await response.json()) as { text?: string };
+          generatedText = data.text?.trim() ?? "";
         }
-        const data = (await response.json()) as { text?: string };
 
         if (controller.signal.aborted) return;
 
-        if (!data.text?.trim()) throw new Error("empty");
-        setResult(data.text.trim());
+        if (!generatedText) throw new Error("empty");
+        setResult(generatedText);
         setStatus("success");
         setAnimKey((k) => k + 1);
         const historyItem: GenerationHistoryItem = {
           id: createHistoryId(),
           createdAt: Date.now(),
           topic: clean,
-          text: data.text.trim(),
+          text: generatedText,
           mode,
           length: generationLength,
         };
         setHistory((items) => prependHistory(items, historyItem));
-        void loadStats();
+        if (standaloneToy) {
+          setStats({ generations: incrementStandaloneGenerationCount() });
+        } else {
+          void loadStats();
+        }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus("error");
@@ -445,6 +497,7 @@ export default function Home() {
   const isOverLimit = topic.length > MAX_CHARS;
   const canGenerate = status !== "thinking";
   const hasResult = result !== "";
+  const standaloneToy = isStandaloneToy();
 
   /* ── Render ──────────────────────────────────── */
   return (
@@ -826,7 +879,7 @@ export default function Home() {
         </div>
 
         <footer className="site-footer" aria-label="使用统计" aria-live="polite">
-          <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句</span>
+          <span>{standaloneToy ? "本机已生成" : "共生成"} {stats ? formatStat(stats.generations) : "—"} 句</span>
         </footer>
       </div>
     </div>
