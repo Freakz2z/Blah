@@ -22,6 +22,8 @@ const RATE_LIMIT_MAX_REQUESTS = 12;
 const TOY_ALLOWED_ORIGINS = new Set([
   "https://www.bilibili.com",
   "https://bilibili.com",
+  "https://www.bilibilitoy.com",
+  "https://bilibilitoy.com",
 ]);
 
 type RateLimitRecord = { count: number; resetAt: number };
