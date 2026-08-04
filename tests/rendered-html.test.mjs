@@ -39,7 +39,7 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /aria-controls="settings-panel"/);
   assert.match(html, /id="settings-panel"/);
   assert.match(html, /主题设置/);
-  assert.match(html, /模式设置/);
+  assert.doesNotMatch(html, /模式设置/);
   assert.doesNotMatch(html, /theme-toggle/);
   assert.doesNotMatch(html, /翻译你的话，或者认真回答它。/);
 
@@ -58,11 +58,8 @@ test("renders the nonsense generator page", async () => {
   // Char count — RSC wraps text segments with comment markers
   assert.match(html, /0<!.*?\/.*?30</);
 
-  // Mood buttons — 3 states
-  assert.match(html, /mood-options/);
-  assert.match(html, /极差/);
-  assert.match(html, /差/);
-  assert.match(html, /正常/);
+  // Mental-state controls were deliberately removed from the product UI.
+  assert.doesNotMatch(html, /精神状态|mood-options|mood-option|mood-/);
   assert.doesNotMatch(html, /钝角/);
   assert.doesNotMatch(html, /最差/);
 
@@ -73,13 +70,13 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /精辟/);
   assert.match(html, /中等/);
 
-  // Mood label
-
   // Primary button
   assert.match(html, /开始翻译/);
 
   // Result section
   assert.match(html, /等一句没有用的话/);
+  assert.match(html, /共生成/);
+  assert.doesNotMatch(html, /人用过/);
 
   assert.doesNotMatch(html, /mood-track/);
 
@@ -109,7 +106,10 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   const mainStart = page.indexOf('className="main-content"');
   const primaryButton = page.indexOf("Primary button", mainStart);
   const mainControls = page.slice(mainStart, primaryButton);
-  assert.doesNotMatch(mainControls, /mode-block|mood-block|length-block|theme-block/);
+  assert.match(mainControls, /main-options/);
+  assert.match(mainControls, /mode-block/);
+  assert.match(mainControls, /length-block/);
+  assert.doesNotMatch(mainControls, /mood-block|theme-block/);
 
   // Layout is clean — no skeleton references
   assert.match(layout, /胡言乱语生成器/);
@@ -121,11 +121,12 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   const cssContent = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   assert.match(cssContent, /胡言乱语/);
   assert.match(cssContent, /\.app-shell/);
-  assert.match(cssContent, /\.mood-/);
   assert.match(cssContent, /\.result-section/);
   assert.match(cssContent, /\.primary-button/);
-  assert.match(cssContent, /\.mood-options/);
-  assert.match(cssContent, /\.mood-option/);
+  assert.match(cssContent, /\.main-options/);
+  assert.match(cssContent, /\.mode-block/);
+  assert.match(cssContent, /\.length-block/);
+  assert.doesNotMatch(cssContent, /\.mood-/);
   assert.match(cssContent, /prefers-reduced-motion/);
   assert.match(cssContent, /prefers-color-scheme:\s*dark/);
 });

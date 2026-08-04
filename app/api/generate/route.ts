@@ -15,6 +15,7 @@ import {
   rememberResult,
 } from "./quality";
 import { fallbackForLength } from "./fallback";
+import { isUnsafeGeneratedText, safeFallbackForLength } from "./safety";
 import {
   requestCompletion,
   resolveProviderConfig,
@@ -57,6 +58,10 @@ function acceptCompletion(
     return null;
   }
   const text = cleanGeneratedText(completion.content);
+  if (isUnsafeGeneratedText(text)) {
+    console.warn(`generate ${label}: rejected unsafe_output`);
+    return null;
+  }
   const reason = validateGeneratedText(text, topic, mood, generationLength, mode);
   if (reason) {
     console.warn(`generate ${label}: rejected ${reason}`);
@@ -74,6 +79,9 @@ export async function POST(request: Request) {
   };
   const topic = normalizeTopic(body.topic);
   if (!topic) return NextResponse.json({ error: "invalid_topic" }, { status: 400 });
+  if (isUnsafeGeneratedText(topic)) {
+    return NextResponse.json({ error: "unsafe_topic" }, { status: 400 });
+  }
   const mood =
     typeof body.mood === "string" && Object.hasOwn(MENTAL_STATE_PROMPTS, body.mood)
       ? body.mood
@@ -86,7 +94,10 @@ export async function POST(request: Request) {
   if (!provider) {
     console.warn("generate: no model API key is set — serving a canned fallback line");
     await new Promise((resolve) => setTimeout(resolve, 520));
-    return NextResponse.json({ text: fallbackForLength(topic, mood, generationLength, mode) });
+    const fallback = fallbackForLength(topic, mood, generationLength, mode);
+    return NextResponse.json({
+      text: isUnsafeGeneratedText(fallback) ? safeFallbackForLength(generationLength) : fallback,
+    });
   }
   if (provider.provider !== provider.requestedProvider) {
     console.warn(
@@ -161,6 +172,7 @@ export async function POST(request: Request) {
   // validation. Every mode and length has a bounded, task-aware fallback, so a
   // transient model miss never becomes an opaque 502 for the user.
   if (!text) text = fallbackForLength(topic, mood, generationLength, mode);
+  if (isUnsafeGeneratedText(text)) text = safeFallbackForLength(generationLength);
   rememberResult(historyTopic, mood, text);
   return NextResponse.json({ text });
 }
