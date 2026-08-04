@@ -5,9 +5,10 @@
 ## 运行契约
 
 - `POST /generate`
-- 模型固定为 `deepseek-v4-flash`
-- 思考模式固定关闭：`thinking: { type: "disabled" }`
-- API Key 只从 Cloudflare Secret `DEEPSEEK_API_KEY` 读取
+- Ollama Cloud 优先使用 `deepseek-v4-flash:0731`
+- Ollama 不可用或质量校验失败时，切换到 DeepSeek 官方 `deepseek-v4-flash`
+- 两个提供商都关闭思考模式
+- API Key 只从 Cloudflare Secrets `OLLAMA_API_KEY` / `DEEPSEEK_API_KEY` 读取
 - 只允许 Bilibili Toy 页面来源的 CORS 请求
 - 每个客户端 IP 每分钟最多 10 次生成请求
 - 生成结果仍经过现有的清理、质量校验和安全拦截
@@ -24,6 +25,7 @@ npx wrangler deploy --config toy-relay/wrangler.jsonc
 
 ```bash
 npx wrangler secret put DEEPSEEK_API_KEY --config toy-relay/wrangler.jsonc
+npx wrangler secret put OLLAMA_API_KEY --config toy-relay/wrangler.jsonc
 ```
 
 ## 健康检查

@@ -24,6 +24,8 @@ import { fallbackForLength } from "../../app/api/generate/fallback.ts";
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
+const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
+const OLLAMA_MODEL = "deepseek-v4-flash:0731";
 const DEFAULT_MOOD = "正常";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
@@ -37,6 +39,7 @@ const DEFAULT_ALLOWED_ORIGINS = new Set([
 ]);
 
 interface Env {
+  OLLAMA_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   RATE_LIMITER: DurableObjectNamespace;
   TOY_ALLOWED_ORIGINS?: string;
@@ -75,7 +78,14 @@ interface RelayPayload {
   length?: unknown;
 }
 
-interface DeepSeekCompletion {
+type ProviderName = "ollama" | "deepseek";
+
+interface ProviderConfig {
+  name: ProviderName;
+  apiKey: string;
+}
+
+interface ProviderCompletion {
   content: string;
   finishReason: string;
 }
@@ -188,46 +198,84 @@ async function readSmallJsonPayload(request: Request): Promise<RelayPayload | nu
   }
 }
 
-async function requestDeepSeek(
-  apiKey: string,
+function configuredProviders(env: Env): ProviderConfig[] {
+  const providers: ProviderConfig[] = [];
+  if (env.OLLAMA_API_KEY) providers.push({ name: "ollama", apiKey: env.OLLAMA_API_KEY });
+  if (env.DEEPSEEK_API_KEY) providers.push({ name: "deepseek", apiKey: env.DEEPSEEK_API_KEY });
+  return providers;
+}
+
+async function requestCompletion(
+  provider: ProviderConfig,
   systemPrompt: string,
   topic: string,
   mode: GenerationMode,
   params: SamplingParams,
-): Promise<DeepSeekCompletion> {
-  const response = await fetch(DEEPSEEK_ENDPOINT, {
+): Promise<ProviderCompletion> {
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: `模式：${mode}\n输入：${topic}` },
+  ];
+  const isOllama = provider.name === "ollama";
+  const response = await fetch(isOllama ? OLLAMA_ENDPOINT : DEEPSEEK_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${provider.apiKey}`,
     },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      thinking: { type: "disabled" },
-      temperature: params.temperature,
-      top_p: params.topP,
-      max_tokens: params.maxTokens,
-      stop: ["\n"],
-      stream: false,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `模式：${mode}\n输入：${topic}` },
-      ],
-    }),
+    body: JSON.stringify(isOllama
+      ? {
+          model: OLLAMA_MODEL,
+          stream: false,
+          think: false,
+          messages,
+          options: {
+            temperature: params.temperature,
+            top_p: params.topP,
+            num_predict: params.maxTokens,
+            stop: ["\n"],
+          },
+        }
+      : {
+          model: DEEPSEEK_MODEL,
+          thinking: { type: "disabled" },
+          temperature: params.temperature,
+          top_p: params.topP,
+          max_tokens: params.maxTokens,
+          stop: ["\n"],
+          stream: false,
+          messages,
+        }),
     signal: AbortSignal.timeout(params.timeoutMs),
   });
 
   if (!response.ok) {
-    console.warn(`deepseek upstream returned ${response.status}`);
-    throw new Error(`deepseek_upstream_${response.status}`);
+    console.warn(`${provider.name} upstream returned ${response.status}`);
+    throw new Error(`${provider.name}_upstream_${response.status}`);
   }
 
   const data = await response.json().catch(() => null) as {
+    message?: { content?: unknown };
+    done?: unknown;
+    done_reason?: unknown;
     choices?: Array<{
       message?: { content?: unknown };
       finish_reason?: unknown;
     }>;
   } | null;
+
+  if (isOllama) {
+    return {
+      content: typeof data?.message?.content === "string" ? data.message.content : "",
+      finishReason:
+        typeof data?.done_reason === "string"
+          ? data.done_reason
+          : data?.done === true
+            ? "stop"
+            : "",
+    };
+  }
+
   const choice = data?.choices?.[0];
   return {
     content: typeof choice?.message?.content === "string" ? choice.message.content : "",
@@ -236,7 +284,7 @@ async function requestDeepSeek(
 }
 
 function acceptCompletion(
-  completion: DeepSeekCompletion,
+  completion: ProviderCompletion,
   topic: string,
   generationLength: GenerationLength,
   mode: GenerationMode,
@@ -247,17 +295,17 @@ function acceptCompletion(
   return validateGeneratedText(text, topic, DEFAULT_MOOD, generationLength, mode) ? null : text;
 }
 
-async function generateWithDeepSeek(
-  apiKey: string,
+async function generateWithProvider(
+  provider: ProviderConfig,
   topic: string,
   generationLength: GenerationLength,
   mode: GenerationMode,
-): Promise<string> {
+): Promise<string | null> {
   const draw = drawMechanismSets(DEFAULT_MOOD);
   const settled = await Promise.allSettled(
     draw.candidates.map((mechanisms, index) =>
-      requestDeepSeek(
-        apiKey,
+      requestCompletion(
+        provider,
         buildSystemPrompt(DEFAULT_MOOD, mechanisms, false, generationLength, mode),
         topic,
         mode,
@@ -300,8 +348,8 @@ async function generateWithDeepSeek(
 
   if (!text) {
     try {
-      const retry = await requestDeepSeek(
-        apiKey,
+      const retry = await requestCompletion(
+        provider,
         buildSystemPrompt(DEFAULT_MOOD, [draw.retry], true, generationLength, mode),
         topic,
         mode,
@@ -316,12 +364,25 @@ async function generateWithDeepSeek(
     }
   }
 
-  // A bounded local fallback keeps the Toy usable during a transient provider
-  // miss, while successful requests always come from DeepSeek.
-  if (!text) text = fallbackForLength(topic, DEFAULT_MOOD, generationLength, mode);
-  if (isUnsafeGeneratedText(text)) text = safeFallbackForLength(generationLength);
+  if (!text || isUnsafeGeneratedText(text)) return null;
   rememberResult(historyKey, DEFAULT_MOOD, text);
   return text;
+}
+
+async function generateWithProviders(
+  providers: ProviderConfig[],
+  topic: string,
+  generationLength: GenerationLength,
+  mode: GenerationMode,
+): Promise<string> {
+  for (const provider of providers) {
+    const text = await generateWithProvider(provider, topic, generationLength, mode);
+    if (text) return text;
+    console.warn(`${provider.name} produced no quality-approved result; trying next provider`);
+  }
+
+  const fallback = fallbackForLength(topic, DEFAULT_MOOD, generationLength, mode);
+  return isUnsafeGeneratedText(fallback) ? safeFallbackForLength(generationLength) : fallback;
 }
 
 export class RateLimiter {
@@ -361,11 +422,20 @@ const worker = {
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const providers = configuredProviders(env);
       return jsonResponse(request, env, {
         ok: true,
-        model: DEEPSEEK_MODEL,
+        primary: providers[0]?.name ?? null,
+        providers: {
+          ollama: Boolean(env.OLLAMA_API_KEY),
+          deepseek: Boolean(env.DEEPSEEK_API_KEY),
+        },
+        models: {
+          ollama: OLLAMA_MODEL,
+          deepseek: DEEPSEEK_MODEL,
+        },
         thinking: "disabled",
-        configured: Boolean(env.DEEPSEEK_API_KEY),
+        configured: providers.length > 0,
       });
     }
 
@@ -379,7 +449,8 @@ const worker = {
     if (isUnsafeGeneratedText(topic)) {
       return jsonResponse(request, env, { error: "unsafe_topic" }, 400);
     }
-    if (!env.DEEPSEEK_API_KEY) {
+    const providers = configuredProviders(env);
+    if (providers.length === 0) {
       return jsonResponse(request, env, { error: "provider_not_configured" }, 503);
     }
 
@@ -392,7 +463,7 @@ const worker = {
     const generationLength = normalizeGenerationLength(payload?.length);
 
     try {
-      const text = await generateWithDeepSeek(env.DEEPSEEK_API_KEY, topic, generationLength, mode);
+      const text = await generateWithProviders(providers, topic, generationLength, mode);
       return jsonResponse(request, env, { text });
     } catch (error) {
       console.warn("toy relay failed", error instanceof Error ? error.message : "unknown");
