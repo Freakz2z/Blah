@@ -291,6 +291,30 @@ test("every mode and length has a valid fallback sentence", () => {
   assert.doesNotMatch(fallbackForLength(topics["回答"], "正常", "正常", "回答"), /^为什么/);
 });
 
+test("fallback quality floor covers common inputs without mechanical fragments", () => {
+  const cases = [
+    ["翻译", "我今天不想上班"],
+    ["翻译", "我很困，但还是起床上班了"],
+    ["翻译", "外面下雨了，我忘记带伞。"],
+    ["翻译", "ChatGPT今天不想回答问题"],
+    ["回答", "为什么周一总是来得这么快？"],
+    ["回答", "怎么才能早点睡？"],
+    ["回答", "能不能一边减肥一边吃夜宵？"],
+    ["回答", "今天吃什么？"],
+  ];
+
+  for (const [mode, topic] of cases) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topic, "正常", length, mode);
+      assert.equal(validateGeneratedText(text, topic, "正常", length, mode), null, `${mode}/${length}: ${text}`);
+      assert.equal(isUnsafeGeneratedText(text), false, `${mode}/${length}: ${text}`);
+      assert.doesNotMatch(text, /不稍微|稍微排队|决定请假|办了加急|拒绝答题/);
+    }
+  }
+
+  assert.equal(fallbackForLength("我今天不想上班", "正常", "精辟", "翻译"), "工位替我上班。");
+});
+
 test("normal translation fallback joins after source punctuation cleanly", () => {
   const text = fallbackForLength("外面下雨了，我忘记带伞。", "极差", "正常", "翻译");
   assert.equal(text.includes("。，"), false);

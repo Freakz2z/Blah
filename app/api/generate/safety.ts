@@ -24,8 +24,8 @@ export function safeFallbackForLength(generationLength: GenerationLength): strin
     case "精辟":
       return "先暂停一下。";
     case "中等":
-      return "这题先换个方向，安全一点再胡。";
+      return "这题先换个方向，安全一点再生成。";
     case "正常":
-      return "这题先换个方向，安全一点再胡，免得一句胡话把正常日子带去奇怪的地方。";
+      return "这题先换个方向，安全一点再生成，避免把不合适的内容带到结果里。";
   }
 }

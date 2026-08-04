@@ -76,6 +76,7 @@ test("renders the nonsense generator page", async () => {
   // Result section
   assert.match(html, /等一句没有用的话/);
   assert.match(html, /共生成/);
+  assert.doesNotMatch(html, /句胡言乱语/);
   assert.doesNotMatch(html, /人用过/);
 
   assert.doesNotMatch(html, /mood-track/);
@@ -103,6 +104,8 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   assert.match(page, /胡言乱语生成器/);
   assert.match(page, /"use client"/);
   assert.doesNotMatch(page, /SkeletonPreview/);
+  assert.doesNotMatch(page, /胡得太勤|再胡一次|没胡出来|先不胡|校对胡言乱语/);
+  assert.match(page, /重新生成/);
   const mainStart = page.indexOf('className="main-content"');
   const primaryButton = page.indexOf("Primary button", mainStart);
   const mainControls = page.slice(mainStart, primaryButton);
