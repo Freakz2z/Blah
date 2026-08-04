@@ -1,6 +1,14 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  HISTORY_LIMIT,
+  HISTORY_STORAGE_KEY,
+  parseHistory,
+  prependHistory,
+  serializeHistory,
+  type GenerationHistoryItem,
+} from "./history";
 
 /* ── Constants ─────────────────────────────────── */
 const MODES = ["翻译", "回答"] as const;
@@ -24,9 +32,26 @@ const CANVAS_SANS =
 type UsageStats = { generations: number };
 
 const STAT_FORMATTER = new Intl.NumberFormat("zh-CN");
+const HISTORY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function formatStat(value: number): string {
   return STAT_FORMATTER.format(value);
+}
+
+function formatHistoryTime(timestamp: number): string {
+  return HISTORY_TIME_FORMATTER.format(timestamp);
+}
+
+function createHistoryId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /* ── Component ─────────────────────────────────── */
@@ -43,12 +68,17 @@ export default function Home() {
   const [animKey, setAnimKey] = useState(0);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
+  const [historyReady, setHistoryReady] = useState(false);
   const [stats, setStats] = useState<UsageStats | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const historyPanelRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
   const statsRequestRef = useRef(0);
@@ -79,6 +109,38 @@ export default function Home() {
     const timer = window.setTimeout(() => void loadStats(), 0);
     return () => window.clearTimeout(timer);
   }, [loadStats]);
+
+  /* Browser-only generation history. It never reaches the Worker or stats API. */
+  useEffect(() => {
+    const loadTimer = window.setTimeout(() => {
+      let stored = "";
+      try {
+        stored = window.localStorage.getItem(HISTORY_STORAGE_KEY) ?? "";
+      } catch {
+        stored = "";
+      }
+      setHistory(parseHistory(stored));
+      setHistoryReady(true);
+    }, 0);
+
+    const syncFromAnotherTab = (event: StorageEvent) => {
+      if (event.key === HISTORY_STORAGE_KEY) setHistory(parseHistory(event.newValue));
+    };
+    window.addEventListener("storage", syncFromAnotherTab);
+    return () => {
+      window.clearTimeout(loadTimer);
+      window.removeEventListener("storage", syncFromAnotherTab);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!historyReady) return;
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, serializeHistory(history));
+    } catch {
+      // Private browsing and full storage must not block generation.
+    }
+  }, [history, historyReady]);
 
   /* thinking animation — monotonic three-act narration, no wrap-around */
   useEffect(() => {
@@ -114,20 +176,30 @@ export default function Home() {
   }, [theme]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && !historyOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      setSettingsOpen(false);
-      settingsButtonRef.current?.focus();
+      if (historyOpen) {
+        setHistoryOpen(false);
+        historyButtonRef.current?.focus();
+      } else {
+        setSettingsOpen(false);
+        settingsButtonRef.current?.focus();
+      }
     };
     const closeOnOutsideClick = (event: PointerEvent) => {
       const target = event.target as Node;
       if (
-        settingsPanelRef.current?.contains(target) ||
-        settingsButtonRef.current?.contains(target)
+        (settingsOpen &&
+          (settingsPanelRef.current?.contains(target) ||
+            settingsButtonRef.current?.contains(target))) ||
+        (historyOpen &&
+          (historyPanelRef.current?.contains(target) ||
+            historyButtonRef.current?.contains(target)))
       )
         return;
       setSettingsOpen(false);
+      setHistoryOpen(false);
     };
     document.addEventListener("keydown", closeOnEscape);
     document.addEventListener("pointerdown", closeOnOutsideClick);
@@ -135,7 +207,7 @@ export default function Home() {
       document.removeEventListener("keydown", closeOnEscape);
       document.removeEventListener("pointerdown", closeOnOutsideClick);
     };
-  }, [settingsOpen]);
+  }, [historyOpen, settingsOpen]);
 
   /* ── Generate ────────────────────────────────── */
   const generate = useCallback(
@@ -193,6 +265,15 @@ export default function Home() {
         setResult(data.text.trim());
         setStatus("success");
         setAnimKey((k) => k + 1);
+        const historyItem: GenerationHistoryItem = {
+          id: createHistoryId(),
+          createdAt: Date.now(),
+          topic: clean,
+          text: data.text.trim(),
+          mode,
+          length: generationLength,
+        };
+        setHistory((items) => prependHistory(items, historyItem));
         void loadStats();
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -215,6 +296,29 @@ export default function Home() {
     },
     [topic, mode, generationLength, status, loadStats],
   );
+
+  const restoreHistory = useCallback((item: GenerationHistoryItem) => {
+    abortRef.current?.abort();
+    setTopic(item.topic);
+    setMode(item.mode);
+    setGenerationLength(item.length);
+    setResult(item.text);
+    setStatus("success");
+    setMessage("");
+    setCopyState("idle");
+    setAnimKey((key) => key + 1);
+    setHistoryOpen(false);
+    historyButtonRef.current?.focus();
+  }, []);
+
+  const removeHistoryItem = useCallback((id: string) => {
+    setHistory((items) => items.filter((item) => item.id !== id));
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    if (!window.confirm("确定清空全部历史记录吗？")) return;
+    setHistory([]);
+  }, []);
 
   /* ── Copy — clipboard API with execCommand fallback ── */
   const copyResult = useCallback(async () => {
@@ -344,10 +448,31 @@ export default function Home() {
             <h1>胡言乱语生成器</h1>
           </div>
           <button
+            ref={historyButtonRef}
+            className={`settings-toggle history-toggle${historyOpen ? " active" : ""}`}
+            type="button"
+            onClick={() => {
+              setHistoryOpen((open) => !open);
+              setSettingsOpen(false);
+            }}
+            aria-label={historyOpen ? "关闭历史记录" : "打开历史记录"}
+            aria-expanded={historyOpen}
+            aria-controls="history-panel"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 7v5l3 2M5.4 5.4A9 9 0 1 1 3 12" />
+              <path d="M3 5v4h4" />
+            </svg>
+            {history.length > 0 && <span className="history-count">{history.length}</span>}
+          </button>
+          <button
             ref={settingsButtonRef}
             className={`settings-toggle${settingsOpen ? " active" : ""}`}
             type="button"
-            onClick={() => setSettingsOpen((open) => !open)}
+            onClick={() => {
+              setSettingsOpen((open) => !open);
+              setHistoryOpen(false);
+            }}
             aria-label={settingsOpen ? "关闭设置" : "打开设置"}
             aria-expanded={settingsOpen}
             aria-controls="settings-panel"
@@ -411,6 +536,70 @@ export default function Home() {
                   ))}
                 </div>
               </fieldset>
+            </div>
+          </div>
+
+          <div
+            ref={historyPanelRef}
+            id="history-panel"
+            className="settings-popover history-popover"
+            role="dialog"
+            aria-label="历史记录"
+            hidden={!historyOpen}
+          >
+            <div className="settings-header">
+              <span>历史记录</span>
+              <div className="history-header-actions">
+                <span className="history-count-label">{history.length}/{HISTORY_LIMIT}</span>
+                {history.length > 0 && (
+                  <button type="button" onClick={clearHistory}>清空</button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistoryOpen(false);
+                    historyButtonRef.current?.focus();
+                  }}
+                  aria-label="关闭历史记录"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="history-content">
+              {history.length === 0 ? (
+                <p className="history-empty">还没有生成记录</p>
+              ) : (
+                <div className="history-list" role="list" aria-label="生成历史">
+                  {history.map((item) => (
+                    <div className="history-item" role="listitem" key={item.id}>
+                      <button
+                        type="button"
+                        className="history-item-main"
+                        onClick={() => restoreHistory(item)}
+                        aria-label={`恢复 ${item.text}`}
+                      >
+                        <span className="history-item-meta">
+                          <span>{item.mode} · {item.length}</span>
+                          <time dateTime={new Date(item.createdAt).toISOString()}>
+                            {formatHistoryTime(item.createdAt)}
+                          </time>
+                        </span>
+                        <span className="history-item-result">{item.text}</span>
+                        <span className="history-item-topic">{item.topic}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="history-item-delete"
+                        onClick={() => removeHistoryItem(item.id)}
+                        aria-label={`删除 ${item.text}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </header>

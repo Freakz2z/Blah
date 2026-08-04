@@ -35,6 +35,9 @@ test("renders the nonsense generator page", async () => {
   assert.match(html, /胡言乱语生成器/);
 
   // Header
+  assert.match(html, /history-toggle/);
+  assert.match(html, /历史记录/);
+  assert.match(html, /history-panel/);
   assert.match(html, /settings-toggle/);
   assert.match(html, /aria-controls="settings-panel"/);
   assert.match(html, /id="settings-panel"/);
@@ -106,6 +109,8 @@ test("keeps the preview skeleton scoped and disposable", async () => {
   assert.doesNotMatch(page, /SkeletonPreview/);
   assert.doesNotMatch(page, /胡得太勤|再胡一次|没胡出来|先不胡|校对胡言乱语/);
   assert.match(page, /重新生成/);
+  assert.match(page, /localStorage/);
+  assert.match(page, /HISTORY_LIMIT/);
   const mainStart = page.indexOf('className="main-content"');
   const primaryButton = page.indexOf("Primary button", mainStart);
   const mainControls = page.slice(mainStart, primaryButton);
