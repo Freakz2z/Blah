@@ -19,6 +19,10 @@ interface Env {
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 12;
+const TOY_ALLOWED_ORIGINS = new Set([
+  "https://www.bilibili.com",
+  "https://bilibili.com",
+]);
 
 type RateLimitRecord = { count: number; resetAt: number };
 
@@ -160,6 +164,33 @@ async function recordUsage(env: Env): Promise<void> {
   if (!response.ok) throw new Error(`stats record failed: ${response.status}`);
 }
 
+function isToyApiPath(pathname: string): boolean {
+  return pathname === "/api/generate" || pathname === "/api/stats";
+}
+
+function withToyCors(request: Request, response: Response): Response {
+  const origin = request.headers.get("Origin");
+  if (!origin || !TOY_ALLOWED_ORIGINS.has(origin)) return response;
+
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type");
+  headers.set("Access-Control-Max-Age", "600");
+  const vary = headers.get("Vary");
+  headers.set("Vary", vary ? `${vary}, Origin` : "Origin");
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function toyCorsPreflight(request: Request): Response {
+  return withToyCors(request, new Response(null, { status: 204 }));
+}
+
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -170,13 +201,20 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    if (isToyApiPath(url.pathname) && request.method === "OPTIONS") {
+      return toyCorsPreflight(request);
+    }
+
     if (url.pathname === "/api/stats" && request.method === "GET") {
       try {
         const stats = await readUsageStats(env);
-        return Response.json(stats);
+        return withToyCors(request, Response.json(stats));
       } catch (error) {
         console.warn("stats: unavailable", error);
-        return Response.json({ error: "stats_unavailable" }, { status: 503 });
+        return withToyCors(
+          request,
+          Response.json({ error: "stats_unavailable" }, { status: 503 }),
+        );
       }
     }
 
@@ -186,16 +224,16 @@ const worker = {
       const payload = await readSmallJsonPayload(request);
       const topic = payload ? normalizeTopic(payload.topic) : null;
       if (topic === null) {
-        return Response.json({ error: "invalid_topic" }, { status: 400 });
+        return withToyCors(request, Response.json({ error: "invalid_topic" }, { status: 400 }));
       }
       if (isUnsafeGeneratedText(topic)) {
-        return Response.json({ error: "unsafe_topic" }, { status: 400 });
+        return withToyCors(request, Response.json({ error: "unsafe_topic" }, { status: 400 }));
       }
 
       const clientIp = request.headers.get("CF-Connecting-IP") ?? "anonymous";
       const limiterId = env.RATE_LIMITER.idFromName(clientIp);
       const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://rate-limit/check");
-      if (!limiterResponse.ok) return limiterResponse;
+      if (!limiterResponse.ok) return withToyCors(request, limiterResponse);
     }
 
     if (url.pathname === "/_vinext/image") {
@@ -218,7 +256,7 @@ const worker = {
         console.warn("stats: record unavailable", error);
       }
     }
-    return response;
+    return isToyApiPath(url.pathname) ? withToyCors(request, response) : response;
   },
 };
 

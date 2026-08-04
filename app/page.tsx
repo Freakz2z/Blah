@@ -47,6 +47,14 @@ function formatHistoryTime(timestamp: number): string {
   return HISTORY_TIME_FORMATTER.format(timestamp);
 }
 
+function appApiUrl(path: string): string {
+  if (typeof window === "undefined") return path;
+  const configuredBase = (
+    window as Window & { __BLAHBLAH_API_BASE__?: string }
+  ).__BLAHBLAH_API_BASE__ ?? "";
+  return `${configuredBase.replace(/\/+$/, "")}${path}`;
+}
+
 function createHistoryId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -86,7 +94,7 @@ export default function Home() {
   const loadStats = useCallback(async () => {
     const requestId = ++statsRequestRef.current;
     try {
-      const response = await fetch("/api/stats", { cache: "no-store" });
+      const response = await fetch(appApiUrl("/api/stats"), { cache: "no-store" });
       if (!response.ok) throw new Error("stats_unavailable");
       const data = (await response.json()) as Partial<UsageStats>;
       const generations = data.generations;
@@ -239,7 +247,7 @@ export default function Home() {
       setCopyState("idle");
 
       try {
-        const response = await fetch("/api/generate", {
+        const response = await fetch(appApiUrl("/api/generate"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
