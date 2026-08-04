@@ -36,6 +36,7 @@ const TOY_STATS_STORAGE_KEY = "blahblah:toy-generation-count:v1";
 type BlahBlahRuntimeWindow = Window & {
   __BLAHBLAH_API_BASE__?: string;
   __BLAHBLAH_STANDALONE_TOY__?: boolean;
+  __BLAHBLAH_TOY_RELAY_URL__?: string;
 };
 
 const STAT_FORMATTER = new Intl.NumberFormat("zh-CN");
@@ -63,6 +64,11 @@ function appApiUrl(path: string): string {
 function isStandaloneToy(): boolean {
   return typeof window !== "undefined" &&
     Boolean((window as BlahBlahRuntimeWindow).__BLAHBLAH_STANDALONE_TOY__);
+}
+
+function toyRelayUrl(): string {
+  if (typeof window === "undefined") return "";
+  return ((window as BlahBlahRuntimeWindow).__BLAHBLAH_TOY_RELAY_URL__ ?? "").replace(/\/+$/, "");
 }
 
 function readStandaloneGenerationCount(): number {
@@ -287,11 +293,34 @@ export default function Home() {
         let generatedText = "";
 
         if (standaloneToy) {
-          // Preserve the small thinking beat without introducing a network
-          // request into the static Toy package.
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
-          if (controller.signal.aborted) return;
-          generatedText = generateStandaloneText(clean, mode, generationLength).trim();
+          const relay = toyRelayUrl();
+          if (relay) {
+            const response = await fetch(`${relay}/generate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                topic: clean,
+                mode,
+                length: generationLength,
+              }),
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              const payload = (await response.json().catch(() => ({}))) as { error?: string };
+              if (payload.error === "rate_limited") {
+                throw new Error(`rate_limited:${response.headers.get("Retry-After") ?? ""}`);
+              }
+              throw new Error(payload.error ?? "toy_relay_unavailable");
+            }
+            const data = (await response.json()) as { text?: string };
+            generatedText = data.text?.trim() ?? "";
+          } else {
+            // Keep older local-only packages usable until they are replaced by
+            // a build that includes the relay URL.
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
+            if (controller.signal.aborted) return;
+            generatedText = generateStandaloneText(clean, mode, generationLength).trim();
+          }
         } else {
           const response = await fetch(appApiUrl("/api/generate"), {
             method: "POST",
@@ -347,6 +376,10 @@ export default function Home() {
           );
         } else if (err instanceof Error && err.message === "unsafe_topic") {
           setMessage("这个题目暂时不能生成，请换个普通话题。");
+        } else if (err instanceof Error && err.message === "provider_not_configured") {
+          setMessage("AI 服务正在配置中，请稍后再试。");
+        } else if (err instanceof Error && err.message === "upstream_unavailable") {
+          setMessage("AI 服务暂时不可用，请稍后再试。");
         } else {
           setMessage("这次没有生成出来，请再试一次。");
         }

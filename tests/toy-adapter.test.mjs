@@ -14,7 +14,9 @@ test("Toy adapter is a static standalone bundle", async () => {
   assert.match(html, /<div id="root"><\/div>/);
   assert.match(html, /src="\.\/main\.tsx"/);
   assert.match(html, /__BLAHBLAH_STANDALONE_TOY__\s*=\s*true/);
+  assert.match(html, /__BLAHBLAH_TOY_RELAY_URL__\s*=\s*"https:\/\/blahblah-toy-relay\.freak050321\.workers\.dev"/);
   assert.doesNotMatch(html, /blah\.freakz2z\.com/);
+  assert.match(page, /fetch\(`\$\{relay\}\/generate`/);
   assert.match(page, /generateStandaloneText\(clean, mode, generationLength\)/);
   assert.match(localGenerator, /fallbackForLength/);
   assert.match(config, /base:\s*["']\.\/["']/);
@@ -24,13 +26,14 @@ test("Toy adapter is a static standalone bundle", async () => {
   const distEntries = await readdir(distRoot, { recursive: true });
   const runtimeFiles = distEntries.filter((entry) => /\.(?:html|js|css)$/i.test(entry));
   assert.ok(runtimeFiles.length > 0, "Toy production files are missing");
-  for (const entry of runtimeFiles) {
+    for (const entry of runtimeFiles) {
     const content = await readFile(new URL(entry, distRoot), "utf8");
     assert.doesNotMatch(content, /blah\.freakz2z\.com/);
+    assert.doesNotMatch(content, /DEEPSEEK_API_KEY|Authorization\s*:/);
   }
 });
 
-test("standalone Toy generation never needs a provider or unsafe topic", () => {
+test("local Toy compatibility fallback remains provider-free and safe", () => {
   assert.equal(
     generateStandaloneText("我今天不想上班", "翻译", "精辟"),
     "工位替我上班。",
