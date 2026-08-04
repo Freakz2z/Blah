@@ -29,7 +29,7 @@ npx wrangler secret put DEEPSEEK_API_KEY --config toy-relay/wrangler.jsonc
 ## 健康检查
 
 ```bash
-curl https://blahblah-toy-relay.<你的-workers.dev-子域>.workers.dev/health
+curl https://api.freakz2z.com/health
 ```
 
 响应只包含模型、思考模式和是否已配置的布尔值，不会返回 Secret 内容。

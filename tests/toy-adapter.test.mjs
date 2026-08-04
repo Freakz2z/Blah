@@ -14,7 +14,7 @@ test("Toy adapter is a static standalone bundle", async () => {
   assert.match(html, /<div id="root"><\/div>/);
   assert.match(html, /src="\.\/main\.tsx"/);
   assert.match(html, /__BLAHBLAH_STANDALONE_TOY__\s*=\s*true/);
-  assert.match(html, /__BLAHBLAH_TOY_RELAY_URL__\s*=\s*"https:\/\/blahblah-toy-relay\.freak050321\.workers\.dev"/);
+  assert.match(html, /__BLAHBLAH_TOY_RELAY_URL__\s*=\s*"https:\/\/api\.freakz2z\.com"/);
   assert.doesNotMatch(html, /blah\.freakz2z\.com/);
   assert.match(page, /fetch\(`\$\{relay\}\/generate`/);
   assert.match(page, /generateStandaloneText\(clean, mode, generationLength\)/);
