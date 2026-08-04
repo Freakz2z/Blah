@@ -10,8 +10,6 @@
   --accent: #c0392b;
   --accent-soft: rgba(192, 57, 43, 0.08);
   --success: #4a7c59;
-  --chaos: #ff0040;
-  --chaos-bg: #0a0806;
 
   --ls-tight: 0.02em;
   --ls-base: 0.04em;
@@ -125,85 +123,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-
-.site-footer-divider { opacity: 0.45; }
-
-/* ════════════════════════════════════════════════
-   APOCALYPSE MODE — 极差 (mood-0)
-   ════════════════════════════════════════════════ */
-
-/* ── Apocalypse overlay ────────────────────────── */
-.app-shell::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 9999;
-  opacity: 0;
-  transition: opacity 400ms ease;
-  background: none;
-}
-
-.mood-0.app-shell::after {
-  opacity: 0.3;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(255, 0, 64, 0.06) 2px,
-    rgba(255, 0, 64, 0.06) 4px
-  );
-  animation: scanline-drift 80ms linear infinite;
-}
-
-/* ── Apocalypse body background ────────────────── */
-/* 500ms delay lets the background transition fade in before flicker starts */
-.mood-0.app-shell {
-  background: var(--chaos-bg);
-  animation: bg-flicker 120ms steps(2) 500ms infinite;
-}
-
-/* ── Apocalypse text corruption ────────────────── */
-.mood-0 .site-header h1,
-.mood-0 .empty-message,
-.mood-0 .field-label-row label {
-  animation: text-corrupt 300ms steps(3) infinite;
-}
-
-.mood-0 .result-text.animate-in {
-  color: var(--chaos);
-  animation: chaos-rise 500ms cubic-bezier(0.1, 0.8, 0.2, 1) both, text-shimmer 2s ease-in-out infinite 500ms;
-  text-shadow: none;
-}
-
-/* ── Apocalypse button ────────────────────────── */
-.mood-0 .primary-button {
-  background: var(--chaos);
-  border-color: var(--chaos);
-}
-
-.mood-0 .primary-button[aria-disabled="true"] {
-  background: var(--chaos);
-  border-color: var(--chaos);
-  opacity: 0.5;
-}
-
-/* ── Apocalypse mood option ────────────────────── */
-.mood-0 .mood-option.active {
-  color: var(--chaos);
-  box-shadow: inset 0 -2px 0 var(--chaos);
-  animation: text-corrupt 200ms steps(3) infinite;
-}
-
-/* ── Apocalypse input ─────────────────────────── */
-.mood-0 .topic-input {
-  border-bottom-color: var(--chaos);
-  color: var(--chaos);
-  animation: text-corrupt 400ms steps(3) infinite;
-}
-
-/* the easter egg shouldn't punish someone mid-typing */
-.mood-0 .topic-input:focus { animation: none; }
 
 /* ── Primary Button ────────────────────────────── */
 .primary-button {
@@ -426,7 +345,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   padding-bottom: 4vh;
 }
 
-/* ── Micro label (shared by field + mood labels) ── */
+/* ── Micro label ────────────────────────────────── */
 .micro-label {
   font-size: 12px;
   font-weight: 600;
@@ -482,6 +401,12 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .mode-option:focus-visible { outline-offset: -3px; }
 .mode-block:disabled .mode-option { cursor: default; opacity: 0.5; }
 
+.main-options {
+  display: grid;
+  gap: clamp(18px, 3vh, 28px);
+  flex-shrink: 0;
+}
+
 /* ── Text Input ────────────────────────────────── */
 .field-block { flex-shrink: 0; }
 
@@ -536,45 +461,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   outline: none;
   border-bottom-color: var(--fg);
 }
-
-/* ── Mood Options ──────────────────────────────── */
-.mood-block {
-  min-inline-size: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  flex-shrink: 0;
-}
-
-.mood-block > .micro-label { margin-bottom: 10px; }
-
-.mood-options {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
-}
-
-.mood-option {
-  min-height: 42px;
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: var(--ls-base);
-  transition: color 160ms ease, background-color 160ms ease;
-}
-
-.mood-option + .mood-option {
-  border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
-}
-
-.mood-option:hover,
-.mood-option.active {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-}
-
-.mood-option:focus-visible { outline-offset: -3px; }
-.mood-block:disabled .mood-option { cursor: default; opacity: 0.5; }
 
 /* ── Generation Length ────────────────────────── */
 .length-block {
@@ -698,10 +584,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   animation: none;
 }
 
-/* result entrance animations */
-.mood-0 .result-text.animate-in { animation: chaos-rise 500ms cubic-bezier(0.1, 0.8, 0.2, 1) both; }
-.mood-1 .result-text.animate-in { animation: shake-in 280ms cubic-bezier(0.16, 1, 0.3, 1) both; }
-.mood-2 .result-text.animate-in { animation: rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+/* result entrance animation */
+.result-text.animate-in { animation: rise-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 
 /* ── Result Actions ────────────────────────────── */
 .result-actions {
@@ -794,69 +678,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   to   { opacity: 1; transform: translateY(0); filter: blur(0); }
 }
 
-@keyframes shake-in {
-  0%   { opacity: 0; transform: translateY(12px) rotate(-0.5deg); }
-  25%  { transform: translateY(6px) rotate(0.4deg); }
-  50%  { transform: translateY(3px) rotate(-0.2deg); }
-  75%  { transform: translateY(1px) rotate(0.1deg); }
-  100% { opacity: 1; transform: translateY(0) rotate(0deg); }
-}
-
-@keyframes shiver-in {
-  0%   { opacity: 0; transform: translateY(14px) translateX(0); }
-  15%  { transform: translateY(8px) translateX(-4px); }
-  30%  { transform: translateY(4px) translateX(3px); }
-  45%  { transform: translateY(2px) translateX(-2px); }
-  60%  { transform: translateY(1px) translateX(1.5px); }
-  75%  { transform: translateY(0) translateX(-0.5px); }
-  100% { opacity: 1; transform: translateY(0) translateX(0); }
-}
-
-@keyframes glitch-in {
-  0%   { opacity: 0; transform: translateY(18px) translateX(0); clip-path: inset(0 0 100% 0); }
-  10%  { transform: translateY(8px) translateX(-6px); clip-path: inset(20% 0 60% 0); }
-  20%  { transform: translateY(4px) translateX(5px); clip-path: inset(60% 0 20% 0); }
-  30%  { transform: translateY(2px) translateX(-3px); clip-path: inset(10% 0 70% 0); }
-  40%  { transform: translateY(1px) translateX(2px); clip-path: inset(40% 0 40% 0); }
-  55%  { transform: translateY(0.5px) translateX(-1px); clip-path: inset(0 0 0 0); }
-  70%  { opacity: 0.5; transform: translateY(0.3px) translateX(0.5px); }
-  85%  { opacity: 0.8; transform: translateY(0.1px) translateX(-0.2px); }
-  100% { opacity: 1; transform: translateY(0) translateX(0); }
-}
-
-/* ── APOCALYPSE KEYFRAMES ────────────────────────── */
-
-@keyframes scanline-drift {
-  0%   { background-position: 0 0; }
-  100% { background-position: 0 4px; }
-}
-
-@keyframes bg-flicker {
-  0%, 100% { background: var(--chaos-bg); }
-  50%      { background: #0d0a08; }
-}
-
-@keyframes text-corrupt {
-  0%, 100% { transform: translate(0, 0); }
-  25%      { transform: translate(1px, -0.5px); }
-  50%      { transform: translate(-1.5px, 0.5px); }
-  75%      { transform: translate(0.5px, -1px); }
-}
-
-@keyframes text-shimmer {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.75; }
-}
-
-@keyframes chaos-rise {
-  0%   { opacity: 0; transform: translateY(20px) scale(0.95); filter: blur(8px) hue-rotate(0deg); }
-  20%  { opacity: 0.6; transform: translateY(-5px) scale(1.02); filter: blur(2px) hue-rotate(20deg); }
-  40%  { opacity: 0.3; transform: translateY(3px) scale(0.98); filter: blur(4px) hue-rotate(-15deg); }
-  60%  { opacity: 0.9; transform: translateY(-2px) scale(1.01); filter: blur(1px) hue-rotate(10deg); }
-  80%  { opacity: 0.5; transform: translateY(1px) scale(0.99); filter: blur(3px) hue-rotate(-5deg); }
-  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0) hue-rotate(0deg); }
-}
-
 /* ── Reduced Motion ────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -864,7 +685,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .app-shell::after { animation: none !important; opacity: 0 !important; }
 }
 
 /* ── Tablet+ ────────────────────────────────────── */
@@ -894,6 +714,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   .site-header h1 { font-size: 22px; margin-bottom: 4px; }
   .topic-input { padding: 10px 0; font-size: 20px; }
   .mode-option { min-height: 44px; }
+  .main-options { gap: 14px; }
   .settings-content { gap: 18px; padding-top: 16px; }
   .settings-header { min-height: 48px; }
   .primary-button { height: 44px; font-size: 14px; }

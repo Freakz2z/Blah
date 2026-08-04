@@ -4,7 +4,6 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 /* ── Constants ─────────────────────────────────── */
 const MODES = ["翻译", "回答"] as const;
-const MOODS = ["极差", "差", "正常"];
 const LENGTH_OPTIONS = ["精辟", "中等", "正常"] as const;
 const THEME_OPTIONS = [
   { value: "auto", label: "自动" },
@@ -22,7 +21,7 @@ const CANVAS_SERIF =
 const CANVAS_SANS =
   "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
 
-type UsageStats = { users: number; generations: number };
+type UsageStats = { generations: number };
 
 const STAT_FORMATTER = new Intl.NumberFormat("zh-CN");
 
@@ -34,7 +33,6 @@ function formatStat(value: number): string {
 export default function Home() {
   const [topic, setTopic] = useState("");
   const [mode, setMode] = useState<(typeof MODES)[number]>("翻译");
-  const [mood, setMood] = useState(2); /* "正常" — last index */
   const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]>("正常");
   const [result, setResult] = useState("");
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
@@ -61,20 +59,16 @@ export default function Home() {
       const response = await fetch("/api/stats", { cache: "no-store" });
       if (!response.ok) throw new Error("stats_unavailable");
       const data = (await response.json()) as Partial<UsageStats>;
-      const users = data.users;
       const generations = data.generations;
       if (
-        typeof users !== "number" ||
         typeof generations !== "number" ||
-        !Number.isSafeInteger(users) ||
         !Number.isSafeInteger(generations) ||
-        users < 0 ||
         generations < 0
       ) {
         throw new Error("invalid_stats");
       }
       if (requestId === statsRequestRef.current) {
-        setStats({ users, generations });
+        setStats({ generations });
       }
     } catch {
       if (requestId === statsRequestRef.current) setStats(null);
@@ -179,7 +173,6 @@ export default function Home() {
           body: JSON.stringify({
             topic: clean,
             mode,
-            mood: MOODS[mood],
             length: generationLength,
           }),
           signal: controller.signal,
@@ -211,6 +204,8 @@ export default function Home() {
               ? `胡得太勤了，${seconds} 秒后再来一次。`
               : "操作太快，稍后再胡一次。",
           );
+        } else if (err instanceof Error && err.message === "unsafe_topic") {
+          setMessage("这个题目先不胡，换个普通话题再试。");
         } else {
           setMessage("这次没胡出来，再试一次。");
         }
@@ -218,7 +213,7 @@ export default function Home() {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [topic, mode, mood, generationLength, status, loadStats],
+    [topic, mode, generationLength, status, loadStats],
   );
 
   /* ── Copy — clipboard API with execCommand fallback ── */
@@ -314,7 +309,7 @@ export default function Home() {
     ctx.textBaseline = "middle";
     ctx.textAlign = "left";
     ctx.fillText(
-      `${mode}「${topic.trim()}」·精神状态：${MOODS[mood]}`,
+      `${mode}「${topic.trim()}」`,
       padding,
       footerTop + footerHeight / 2,
     );
@@ -328,11 +323,11 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `胡言乱语-${mode}-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}-${MOODS[mood]}.png`;
+    a.download = `胡言乱语-${mode}-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}.png`;
     a.click();
     URL.revokeObjectURL(url);
     finish("saved");
-  }, [result, saveState, topic, mode, mood]);
+  }, [result, saveState, topic, mode]);
 
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
@@ -341,7 +336,7 @@ export default function Home() {
 
   /* ── Render ──────────────────────────────────── */
   return (
-    <div className={`app-shell mood-${mood}`}>
+    <div className="app-shell">
       <div className="page-frame">
         {/* ── Header ───────────────────────────── */}
         <header className="site-header">
@@ -416,109 +411,6 @@ export default function Home() {
                   ))}
                 </div>
               </fieldset>
-
-              <fieldset className="mode-block" disabled={status === "thinking"}>
-                <legend className="micro-label">模式设置</legend>
-                <div className="mode-options" role="radiogroup" aria-label="生成模式">
-                  {MODES.map((value, index) => (
-                    <button
-                      key={value}
-                      type="button"
-                      role="radio"
-                      className={`mode-option${mode === value ? " active" : ""}`}
-                      aria-checked={mode === value}
-                      tabIndex={mode === value ? 0 : -1}
-                      onClick={() => {
-                        setMode(value);
-                        setResult("");
-                        setStatus("idle");
-                        setMessage("");
-                      }}
-                      onKeyDown={(event) => {
-                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                          ? 1
-                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                            ? -1
-                            : 0;
-                        if (!direction) return;
-                        event.preventDefault();
-                        const nextIndex = (index + direction + MODES.length) % MODES.length;
-                        setMode(MODES[nextIndex]);
-                        setResult("");
-                        setStatus("idle");
-                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
-                        options?.[nextIndex]?.focus();
-                      }}
-                    >
-                      <span>{value}</span>
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-
-              <fieldset className="mood-block" disabled={status === "thinking"}>
-                <legend className="micro-label">精神状态</legend>
-                <div className="mood-options" role="radiogroup" aria-label="精神状态">
-                  {MOODS.map((value, index) => (
-                    <button
-                      key={value}
-                      type="button"
-                      role="radio"
-                      className={`mood-option${mood === index ? " active" : ""}`}
-                      aria-checked={mood === index}
-                      tabIndex={mood === index ? 0 : -1}
-                      onClick={() => setMood(index)}
-                      onKeyDown={(event) => {
-                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                          ? 1
-                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                            ? -1
-                            : 0;
-                        if (!direction) return;
-                        event.preventDefault();
-                        const nextIndex = (index + direction + MOODS.length) % MOODS.length;
-                        setMood(nextIndex);
-                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mood-option");
-                        options?.[nextIndex]?.focus();
-                      }}
-                    >
-                      {value}
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-
-              <fieldset className="length-block" disabled={status === "thinking"}>
-                <legend className="micro-label">生成长度</legend>
-                <div className="length-options" role="radiogroup" aria-label="生成长度">
-                  {LENGTH_OPTIONS.map((value, index) => (
-                    <button
-                      key={value}
-                      type="button"
-                      role="radio"
-                      className={`length-option${generationLength === value ? " active" : ""}`}
-                      aria-checked={generationLength === value}
-                      tabIndex={generationLength === value ? 0 : -1}
-                      onClick={() => setGenerationLength(value)}
-                      onKeyDown={(event) => {
-                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                          ? 1
-                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                            ? -1
-                            : 0;
-                        if (!direction) return;
-                        event.preventDefault();
-                        const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
-                        setGenerationLength(LENGTH_OPTIONS[nextIndex]);
-                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
-                        options?.[nextIndex]?.focus();
-                      }}
-                    >
-                      {value}
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
             </div>
           </div>
         </header>
@@ -556,6 +448,79 @@ export default function Home() {
               />
             </div>
           </form>
+
+          <div className="main-options">
+            <fieldset className="mode-block" disabled={status === "thinking"}>
+              <legend className="micro-label">生成模式</legend>
+              <div className="mode-options" role="radiogroup" aria-label="生成模式">
+                {MODES.map((value, index) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    className={`mode-option${mode === value ? " active" : ""}`}
+                    aria-checked={mode === value}
+                    tabIndex={mode === value ? 0 : -1}
+                    onClick={() => {
+                      setMode(value);
+                      setResult("");
+                      setStatus("idle");
+                      setMessage("");
+                    }}
+                    onKeyDown={(event) => {
+                      const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                        ? 1
+                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                          ? -1
+                          : 0;
+                      if (!direction) return;
+                      event.preventDefault();
+                      const nextIndex = (index + direction + MODES.length) % MODES.length;
+                      setMode(MODES[nextIndex]);
+                      setResult("");
+                      setStatus("idle");
+                      const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
+                      options?.[nextIndex]?.focus();
+                    }}
+                  >
+                    <span>{value}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="length-block" disabled={status === "thinking"}>
+              <legend className="micro-label">生成长度</legend>
+              <div className="length-options" role="radiogroup" aria-label="生成长度">
+                {LENGTH_OPTIONS.map((value, index) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    className={`length-option${generationLength === value ? " active" : ""}`}
+                    aria-checked={generationLength === value}
+                    tabIndex={generationLength === value ? 0 : -1}
+                    onClick={() => setGenerationLength(value)}
+                    onKeyDown={(event) => {
+                      const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                        ? 1
+                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                          ? -1
+                          : 0;
+                      if (!direction) return;
+                      event.preventDefault();
+                      const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
+                      setGenerationLength(LENGTH_OPTIONS[nextIndex]);
+                      const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
+                      options?.[nextIndex]?.focus();
+                    }}
+                  >
+                    {value}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          </div>
 
           {/* Primary button — lives outside the form, submits via form attr */}
           <button
@@ -664,8 +629,6 @@ export default function Home() {
         </div>
 
         <footer className="site-footer" aria-label="使用统计" aria-live="polite">
-          <span>{stats ? formatStat(stats.users) : "—"} 人用过</span>
-          <span className="site-footer-divider" aria-hidden="true">·</span>
           <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句胡言乱语</span>
         </footer>
       </div>

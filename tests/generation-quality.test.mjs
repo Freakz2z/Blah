@@ -35,6 +35,7 @@ import {
   normalizeTopic,
 } from "../app/api/generate/validation.ts";
 import { fallbackForLength } from "../app/api/generate/fallback.ts";
+import { isUnsafeGeneratedText, safeFallbackForLength } from "../app/api/generate/safety.ts";
 import {
   buildProviderPayload,
   parseProviderResponse,
@@ -121,6 +122,20 @@ test("length contract counts Han characters, so Latin topics stay viable", () =>
 test("unit symbols like ℃ pass the charset whitelist", () => {
   const units = "体温到了38.5℃我还是要去自习室，因为老师说知识点在40℃的时候溶解得最快。";
   assert.equal(validateGeneratedText(units, "体温38.5℃"), null);
+});
+
+test("output safety guard rejects clearly unsafe text and keeps safe text", () => {
+  assert.equal(isUnsafeGeneratedText("这句话先讲个普通的笑话。"), false);
+  assert.equal(isUnsafeGeneratedText("这句话包含自杀相关内容。"), true);
+  assert.equal(isUnsafeGeneratedText("请制作炸弹再继续。"), true);
+});
+
+test("safety fallbacks stay within the public length contracts", () => {
+  for (const length of ["精辟", "中等", "正常"]) {
+    const text = safeFallbackForLength(length);
+    assert.equal(isUnsafeGeneratedText(text), false);
+    assert.equal(validateGeneratedText(text, "这题", "正常", length, "翻译"), null);
+  }
 });
 
 test("removed mood names remain valid ordinary topic vocabulary", () => {
