@@ -110,6 +110,24 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   z-index: 2;
 }
 
+/* ── Usage stats ───────────────────────────────── */
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: clamp(12px, 2vh, 18px);
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: var(--ls-base);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.site-footer-divider { opacity: 0.45; }
+
 /* ════════════════════════════════════════════════
    APOCALYPSE MODE — 极差 (mood-0)
    ════════════════════════════════════════════════ */

@@ -32,9 +32,15 @@ const localBindingConfig = {
     ]
     : [],
   durable_objects: {
-    bindings: [{ name: "RATE_LIMITER", class_name: "RateLimiter" }],
+    bindings: [
+      { name: "RATE_LIMITER", class_name: "RateLimiter" },
+      { name: "STATS", class_name: "UsageStatsCounter" },
+    ],
   },
-  migrations: [{ tag: "rate-limiter-v1", new_sqlite_classes: ["RateLimiter"] }],
+  migrations: [
+    { tag: "rate-limiter-v1", new_sqlite_classes: ["RateLimiter"] },
+    { tag: "usage-stats-v1", new_sqlite_classes: ["UsageStatsCounter"] },
+  ],
 };
 
 export default defineConfig(async () => {

@@ -22,6 +22,14 @@ const CANVAS_SERIF =
 const CANVAS_SANS =
   "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
 
+type UsageStats = { users: number; generations: number };
+
+const STAT_FORMATTER = new Intl.NumberFormat("zh-CN");
+
+function formatStat(value: number): string {
+  return STAT_FORMATTER.format(value);
+}
+
 /* ── Component ─────────────────────────────────── */
 export default function Home() {
   const [topic, setTopic] = useState("");
@@ -37,6 +45,7 @@ export default function Home() {
   const [animKey, setAnimKey] = useState(0);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [stats, setStats] = useState<UsageStats | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -44,6 +53,38 @@ export default function Home() {
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const statsRequestRef = useRef(0);
+
+  const loadStats = useCallback(async () => {
+    const requestId = ++statsRequestRef.current;
+    try {
+      const response = await fetch("/api/stats", { cache: "no-store" });
+      if (!response.ok) throw new Error("stats_unavailable");
+      const data = (await response.json()) as Partial<UsageStats>;
+      const users = data.users;
+      const generations = data.generations;
+      if (
+        typeof users !== "number" ||
+        typeof generations !== "number" ||
+        !Number.isSafeInteger(users) ||
+        !Number.isSafeInteger(generations) ||
+        users < 0 ||
+        generations < 0
+      ) {
+        throw new Error("invalid_stats");
+      }
+      if (requestId === statsRequestRef.current) {
+        setStats({ users, generations });
+      }
+    } catch {
+      if (requestId === statsRequestRef.current) setStats(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadStats(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadStats]);
 
   /* thinking animation — monotonic three-act narration, no wrap-around */
   useEffect(() => {
@@ -159,6 +200,7 @@ export default function Home() {
         setResult(data.text.trim());
         setStatus("success");
         setAnimKey((k) => k + 1);
+        void loadStats();
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus("error");
@@ -176,7 +218,7 @@ export default function Home() {
         if (abortRef.current === controller) abortRef.current = null;
       }
     },
-    [topic, mode, mood, generationLength, status],
+    [topic, mode, mood, generationLength, status, loadStats],
   );
 
   /* ── Copy — clipboard API with execCommand fallback ── */
@@ -620,6 +662,12 @@ export default function Home() {
             )}
           </section>
         </div>
+
+        <footer className="site-footer" aria-label="使用统计" aria-live="polite">
+          <span>{stats ? formatStat(stats.users) : "—"} 人用过</span>
+          <span className="site-footer-divider" aria-hidden="true">·</span>
+          <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句胡言乱语</span>
+        </footer>
       </div>
     </div>
   );
