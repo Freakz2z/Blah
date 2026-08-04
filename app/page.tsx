@@ -11,7 +11,7 @@ const THEME_OPTIONS = [
   { value: "dark", label: "暗色" },
 ] as const;
 const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
-  翻译: ["正在拆解原话", "正在替换正常逻辑", "正在校对胡言乱语", "译文有点烫，正在吹凉"],
+  翻译: ["正在拆解原话", "正在替换正常逻辑", "正在校对生成结果", "译文有点烫，正在吹凉"],
   回答: ["正在理解问题", "正在建立不必要的联系", "正在强行得出答案", "答案有点烫，正在吹凉"],
 };
 const MAX_CHARS = 30;
@@ -201,13 +201,13 @@ export default function Home() {
           const seconds = err.message.split(":")[1];
           setMessage(
             seconds
-              ? `胡得太勤了，${seconds} 秒后再来一次。`
-              : "操作太快，稍后再胡一次。",
+              ? `生成太频繁了，${seconds} 秒后再来一次。`
+              : "操作太快，稍后再生成。",
           );
         } else if (err instanceof Error && err.message === "unsafe_topic") {
-          setMessage("这个题目先不胡，换个普通话题再试。");
+          setMessage("这个题目暂时不能生成，请换个普通话题。");
         } else {
-          setMessage("这次没胡出来，再试一次。");
+          setMessage("这次没有生成出来，请再试一次。");
         }
       } finally {
         if (abortRef.current === controller) abortRef.current = null;
@@ -554,7 +554,7 @@ export default function Home() {
             {status === "error" && (
               <>
                 <p className="error-message">
-                  {message || "这次没胡出来，再试一次。"}
+                  {message || "这次没有生成出来，请再试一次。"}
                 </p>
                 {!hasResult && (
                   <div className="result-actions">
@@ -580,7 +580,7 @@ export default function Home() {
                     disabled={status === "thinking"}
                     onClick={() => generate()}
                   >
-                    再胡一次
+                    重新生成
                   </button>
                   <button
                     type="button"
@@ -629,7 +629,7 @@ export default function Home() {
         </div>
 
         <footer className="site-footer" aria-label="使用统计" aria-live="polite">
-          <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句胡言乱语</span>
+          <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句</span>
         </footer>
       </div>
     </div>
