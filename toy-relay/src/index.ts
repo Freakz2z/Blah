@@ -1,6 +1,7 @@
 import {
-  buildSystemPrompt,
+  buildRuntimePrompt,
   drawMechanismSets,
+  RUNTIME_INSTRUCTION,
 } from "../../app/api/generate/prompts.ts";
 import {
   cleanGeneratedText,
@@ -30,6 +31,7 @@ const DEFAULT_MOOD = "正常";
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
 const MAX_PAYLOAD_BYTES = 8 * 1024;
+const OLLAMA_KEEP_ALIVE = "10m";
 
 const DEFAULT_ALLOWED_ORIGINS = new Set([
   "https://www.bilibili.com",
@@ -43,6 +45,7 @@ interface Env {
   DEEPSEEK_API_KEY?: string;
   RATE_LIMITER: DurableObjectNamespace;
   TOY_ALLOWED_ORIGINS?: string;
+  TOY_PROVIDER?: string;
 }
 
 interface DurableObjectStorage {
@@ -99,23 +102,16 @@ interface SamplingParams {
 
 const CANDIDATE_PARAMS: Record<
   GenerationMode,
-  [SamplingParams, SamplingParams, SamplingParams]
+  [SamplingParams, SamplingParams]
 > = {
   翻译: [
-    { temperature: 0.55, topP: 0.78, maxTokens: 100, timeoutMs: 12_000 },
-    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
-    { temperature: 0.85, topP: 0.86, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 8_500 },
+    { temperature: 0.75, topP: 0.84, maxTokens: 64, timeoutMs: 8_500 },
   ],
   回答: [
-    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
-    { temperature: 0.9, topP: 0.88, maxTokens: 100, timeoutMs: 12_000 },
-    { temperature: 1.05, topP: 0.92, maxTokens: 100, timeoutMs: 12_000 },
+    { temperature: 0.7, topP: 0.82, maxTokens: 64, timeoutMs: 8_500 },
+    { temperature: 0.95, topP: 0.9, maxTokens: 64, timeoutMs: 8_500 },
   ],
-};
-
-const RETRY_PARAMS: Record<GenerationMode, SamplingParams> = {
-  翻译: { temperature: 0.45, topP: 0.75, maxTokens: 90, timeoutMs: 10_000 },
-  回答: { temperature: 0.65, topP: 0.8, maxTokens: 90, timeoutMs: 10_000 },
 };
 
 function allowedOrigins(env: Env): Set<string> {
@@ -199,10 +195,67 @@ async function readSmallJsonPayload(request: Request): Promise<RelayPayload | nu
 }
 
 function configuredProviders(env: Env): ProviderConfig[] {
+  const selected = env.TOY_PROVIDER?.trim().toLowerCase();
+  const useOllama = selected !== "deepseek";
+  const useDeepSeek = selected !== "ollama";
   const providers: ProviderConfig[] = [];
-  if (env.OLLAMA_API_KEY) providers.push({ name: "ollama", apiKey: env.OLLAMA_API_KEY });
-  if (env.DEEPSEEK_API_KEY) providers.push({ name: "deepseek", apiKey: env.DEEPSEEK_API_KEY });
+  if (useOllama && env.OLLAMA_API_KEY) {
+    providers.push({ name: "ollama", apiKey: env.OLLAMA_API_KEY });
+  }
+  if (useDeepSeek && env.DEEPSEEK_API_KEY) {
+    providers.push({ name: "deepseek", apiKey: env.DEEPSEEK_API_KEY });
+  }
   return providers;
+}
+
+function buildToyPrompt(
+  mechanisms: string[],
+  strict: boolean,
+  generationLength: GenerationLength,
+  mode: GenerationMode,
+): string {
+  return `${RUNTIME_INSTRUCTION}\n\n${buildRuntimePrompt(
+    DEFAULT_MOOD,
+    mechanisms,
+    strict,
+    generationLength,
+    mode,
+  )}`;
+}
+
+async function readOllamaStream(response: Response): Promise<ProviderCompletion> {
+  if (!response.body) return { content: "", finishReason: "" };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finishReason = "";
+
+  const consumeLine = (line: string) => {
+    if (!line.trim()) return;
+    const chunk = JSON.parse(line) as {
+      message?: { content?: unknown };
+      done?: unknown;
+      done_reason?: unknown;
+    };
+    if (typeof chunk.message?.content === "string") content += chunk.message.content;
+    if (typeof chunk.done_reason === "string") finishReason = chunk.done_reason;
+    else if (chunk.done === true) finishReason = "stop";
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) consumeLine(line);
+  }
+  buffer += decoder.decode();
+  consumeLine(buffer);
+
+  return { content, finishReason };
 }
 
 async function requestCompletion(
@@ -226,8 +279,9 @@ async function requestCompletion(
     body: JSON.stringify(isOllama
       ? {
           model: OLLAMA_MODEL,
-          stream: false,
+          stream: true,
           think: false,
+          keep_alive: OLLAMA_KEEP_ALIVE,
           messages,
           options: {
             temperature: params.temperature,
@@ -254,6 +308,8 @@ async function requestCompletion(
     throw new Error(`${provider.name}_upstream_${response.status}`);
   }
 
+  if (isOllama) return readOllamaStream(response);
+
   const data = await response.json().catch(() => null) as {
     message?: { content?: unknown };
     done?: unknown;
@@ -263,18 +319,6 @@ async function requestCompletion(
       finish_reason?: unknown;
     }>;
   } | null;
-
-  if (isOllama) {
-    return {
-      content: typeof data?.message?.content === "string" ? data.message.content : "",
-      finishReason:
-        typeof data?.done_reason === "string"
-          ? data.done_reason
-          : data?.done === true
-            ? "stop"
-            : "",
-    };
-  }
 
   const choice = data?.choices?.[0];
   return {
@@ -302,17 +346,28 @@ async function generateWithProvider(
   mode: GenerationMode,
 ): Promise<string | null> {
   const draw = drawMechanismSets(DEFAULT_MOOD);
+  const candidateParams = CANDIDATE_PARAMS[mode];
+  const candidateMechanisms = draw.candidates.slice(0, candidateParams.length);
   const settled = await Promise.allSettled(
-    draw.candidates.map((mechanisms, index) =>
+    candidateMechanisms.map((mechanisms, index) =>
       requestCompletion(
         provider,
-        buildSystemPrompt(DEFAULT_MOOD, mechanisms, false, generationLength, mode),
+        buildToyPrompt(mechanisms, false, generationLength, mode),
         topic,
         mode,
-        CANDIDATE_PARAMS[mode][index],
+        candidateParams[index],
       ),
     ),
   );
+
+  settled.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.warn(
+        `${provider.name} candidate-${index} failed`,
+        result.reason instanceof Error ? result.reason.message : "unknown",
+      );
+    }
+  });
 
   const historyKey = `${mode}：${topic}`;
   const valid: Array<{
@@ -334,7 +389,7 @@ async function generateWithProvider(
       topic,
       DEFAULT_MOOD,
       similarity,
-      draw.candidates[index],
+      candidateMechanisms[index],
       generationLength,
       mode,
     );
@@ -344,25 +399,7 @@ async function generateWithProvider(
   valid.sort(
     (a, b) => b.score - a.score || b.topicHit - a.topicHit || b.length - a.length || a.index - b.index,
   );
-  let text = valid[0]?.text;
-
-  if (!text) {
-    try {
-      const retry = await requestCompletion(
-        provider,
-        buildSystemPrompt(DEFAULT_MOOD, [draw.retry], true, generationLength, mode),
-        topic,
-        mode,
-        RETRY_PARAMS[mode],
-      );
-      const retryText = acceptCompletion(retry, topic, generationLength, mode);
-      if (retryText && recentSimilarity(historyKey, DEFAULT_MOOD, retryText) <= 0.5) {
-        text = retryText;
-      }
-    } catch (error) {
-      console.warn("deepseek retry failed", error instanceof Error ? error.message : "unknown");
-    }
-  }
+  const text = valid[0]?.text;
 
   if (!text || isUnsafeGeneratedText(text)) return null;
   rememberResult(historyKey, DEFAULT_MOOD, text);
@@ -423,12 +460,13 @@ const worker = {
 
     if (request.method === "GET" && url.pathname === "/health") {
       const providers = configuredProviders(env);
+      const enabledProviders = new Set(providers.map((provider) => provider.name));
       return jsonResponse(request, env, {
         ok: true,
         primary: providers[0]?.name ?? null,
         providers: {
-          ollama: Boolean(env.OLLAMA_API_KEY),
-          deepseek: Boolean(env.DEEPSEEK_API_KEY),
+          ollama: enabledProviders.has("ollama"),
+          deepseek: enabledProviders.has("deepseek"),
         },
         models: {
           ollama: OLLAMA_MODEL,
