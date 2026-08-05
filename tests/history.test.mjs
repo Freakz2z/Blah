@@ -6,7 +6,7 @@ import {
   parseHistory,
   prependHistory,
   serializeHistory,
-} from "../app/history.ts";
+} from "../toy/src/history.ts";
 
 const item = (id) => ({
   id,

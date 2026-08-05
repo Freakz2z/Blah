@@ -7,7 +7,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const skillDir = resolve(scriptDir, "..");
 const projectRoot = resolve(skillDir, "../..");
 const skillPath = resolve(skillDir, "SKILL.md");
-const outputPath = resolve(projectRoot, "app/api/generate/generated-skill.ts");
+const outputPath = resolve(projectRoot, "shared/generate/generated-skill.ts");
 
 const source = await readFile(skillPath, "utf8");
 const match = source.match(

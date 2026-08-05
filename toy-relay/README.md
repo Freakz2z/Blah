@@ -1,6 +1,6 @@
 # BlahBlah Toy DeepSeek Relay
 
-这是给 Bilibili Toy 使用的独立 Cloudflare Worker，不承载网站页面，也不依赖旧的 `blah.freakz2z.com` Worker。
+这是给 Bilibili Toy 使用的独立 Cloudflare Worker，只提供 AI 中转，不承载页面。
 
 ## 运行契约
 

@@ -20,7 +20,7 @@ if (!topic) {
 }
 
 const response = await fetch(
-  process.env.BLAHBLAH_API_URL ?? "https://blah.freakz2z.com/api/generate",
+  process.env.BLAHBLAH_API_URL ?? "https://api.freakz2z.com/generate",
   {
     method: "POST",
     headers: { "Content-Type": "application/json" },

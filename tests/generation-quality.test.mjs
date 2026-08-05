@@ -1,4 +1,4 @@
-/** Unit tests for the /api/generate quality pipeline (clean/validate/score)
+/** Unit tests for the Toy generation quality pipeline (clean/validate/score)
  * and prompt assembly. Run via `node --test --experimental-strip-types`. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +12,7 @@ import {
   modeFidelityScore,
   recentSimilarity,
   rememberResult,
-} from "../app/api/generate/quality.ts";
+} from "../shared/generate/quality.ts";
 import {
   COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
@@ -28,20 +28,14 @@ import {
   buildRuntimePrompt,
   buildSystemPrompt,
   drawMechanismSets,
-} from "../app/api/generate/prompts.ts";
+} from "../shared/generate/prompts.ts";
 import {
   normalizeGenerationLength,
   normalizeGenerationMode,
   normalizeTopic,
-} from "../app/api/generate/validation.ts";
-import { fallbackForLength } from "../app/api/generate/fallback.ts";
-import { isUnsafeGeneratedText, safeFallbackForLength } from "../app/api/generate/safety.ts";
-import {
-  buildProviderPayload,
-  parseProviderResponse,
-  resolveProviderConfig,
-} from "../app/api/generate/provider.ts";
-
+} from "../shared/generate/validation.ts";
+import { fallbackForLength } from "../shared/generate/fallback.ts";
+import { isUnsafeGeneratedText, safeFallbackForLength } from "../shared/generate/safety.ts";
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
 test("cleanGeneratedText strips nested prefixes and wrapping quotes", () => {
@@ -212,7 +206,7 @@ test("drawMechanismSets keeps candidates disjoint and inside the tier whitelist"
 test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts", () => {
   const prompt = buildSystemPrompt("极差", ["情绪实体化"], false, "正常", "回答");
   assert.ok(prompt.startsWith(SKILL_SOURCE));
-  assert.match(prompt, /# 本次网站运行配置（最高优先级）/);
+  assert.match(prompt, /# 本次 Toy 运行配置（最高优先级）/);
   assert.ok(prompt.includes(MODE_PROMPTS["回答"]));
   assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["极差"]));
   assert.ok(prompt.includes(MECHANISM_HINTS["情绪实体化"]));
@@ -223,7 +217,7 @@ test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts",
   assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
 });
 
-test("compiled Skill is fresh and included verbatim in every website prompt", () => {
+test("compiled Skill is fresh and included verbatim in every Toy prompt", () => {
   const source = readFileSync(
     new URL("../skills/blahblah-generator/SKILL.md", import.meta.url),
     "utf8",
@@ -400,65 +394,4 @@ test("scoring demotes generic punchline crutches and stacked explanations", () =
   const specificScore = scoreGeneratedText(specific, topic, "差", 0, ["错误因果"]);
   const genericScore = scoreGeneratedText(generic, topic, "差", 0, ["错误因果"]);
   assert.ok(specificScore.score > genericScore.score);
-});
-
-test("Ollama Cloud is preferred with the same deepseek-v4-flash model", () => {
-  const config = resolveProviderConfig({
-    OLLAMA_API_KEY: "ollama-test-key",
-    DEEPSEEK_API_KEY: "deepseek-test-key",
-  });
-  assert.deepEqual(config, {
-    provider: "ollama",
-    requestedProvider: "ollama",
-    endpoint: "https://ollama.com/api/chat",
-    apiKey: "ollama-test-key",
-    model: "deepseek-v4-flash",
-  });
-});
-
-test("provider resolution keeps DeepSeek as a safe temporary fallback", () => {
-  const config = resolveProviderConfig({ DEEPSEEK_API_KEY: "deepseek-test-key" });
-  assert.equal(config.provider, "deepseek");
-  assert.equal(config.requestedProvider, "ollama");
-  assert.equal(resolveProviderConfig({}), null);
-});
-
-test("Ollama payload and response use the native cloud API contract", () => {
-  const payload = buildProviderPayload(
-    { provider: "ollama", model: "deepseek-v4-flash" },
-    "system prompt",
-    "今天不想上班",
-    "翻译",
-    { temperature: 0.55, topP: 0.78, maxTokens: 100, timeoutMs: 12_000 },
-  );
-  assert.equal(payload.model, "deepseek-v4-flash");
-  assert.equal(payload.stream, false);
-  assert.equal(payload.think, false);
-  assert.deepEqual(payload.options, {
-    temperature: 0.55,
-    top_p: 0.78,
-    num_predict: 100,
-    stop: ["\n"],
-  });
-  assert.deepEqual(
-    parseProviderResponse("ollama", {
-      message: { content: "生成结果。" },
-      done: true,
-      done_reason: "stop",
-    }),
-    { content: "生成结果。", finishReason: "stop" },
-  );
-});
-
-test("DeepSeek payload remains available for rollback", () => {
-  const payload = buildProviderPayload(
-    { provider: "deepseek", model: "deepseek-v4-flash" },
-    "system prompt",
-    "今天不想上班",
-    "回答",
-    { temperature: 0.7, topP: 0.82, maxTokens: 100, timeoutMs: 12_000 },
-  );
-  assert.deepEqual(payload.thinking, { type: "disabled" });
-  assert.equal(payload.max_tokens, 100);
-  assert.equal(payload.frequency_penalty, 0.15);
 });

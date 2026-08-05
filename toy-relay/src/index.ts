@@ -2,26 +2,26 @@ import {
   buildRuntimePrompt,
   drawMechanismSets,
   RUNTIME_INSTRUCTION,
-} from "../../app/api/generate/prompts.ts";
+} from "../../shared/generate/prompts.ts";
 import {
   cleanGeneratedText,
   recentSimilarity,
   rememberResult,
   scoreGeneratedText,
   validateGeneratedText,
-} from "../../app/api/generate/quality.ts";
+} from "../../shared/generate/quality.ts";
 import {
   isUnsafeGeneratedText,
   safeFallbackForLength,
-} from "../../app/api/generate/safety.ts";
+} from "../../shared/generate/safety.ts";
 import {
   normalizeGenerationLength,
   normalizeGenerationMode,
   normalizeTopic,
   type GenerationLength,
   type GenerationMode,
-} from "../../app/api/generate/validation.ts";
-import { fallbackForLength } from "../../app/api/generate/fallback.ts";
+} from "../../shared/generate/validation.ts";
+import { fallbackForLength } from "../../shared/generate/fallback.ts";
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-v4-flash";

@@ -14,7 +14,7 @@ description: Generate one concise Chinese nonsense sentence in either translatio
 3. 按所选精神状态从对应机制池挑选一个机制。
 4. 先在心里写出忠实直白句，再只扭歪一个关系；不要输出草稿。
 5. 严格执行下方协议和质量闸门。最终只输出生成句子。
-6. 若宿主支持脚本且用户要求与网站完全一致，可运行：
+6. 若宿主支持脚本且用户要求与 Toy 完全一致，可运行：
    `node scripts/generate.mjs --mode 翻译 --mood 正常 --length 正常 "用户输入"`
 
 ## 质量裁决
@@ -29,7 +29,7 @@ description: Generate one concise Chinese nonsense sentence in either translatio
 
 ## 完整生成协议
 
-以下 JSON 是本 Skill、网站 Worker 和社区实现共同使用的唯一规则源。不得另建一份提示词副本。
+以下 JSON 是本 Skill、Toy 中转 Worker 和社区实现共同使用的唯一规则源。不得另建一份提示词副本。
 
 <!-- BLAHBLAH_SPEC_START -->
 ```json
@@ -41,7 +41,7 @@ description: Generate one concise Chinese nonsense sentence in either translatio
     "length": "正常"
   },
   "runtimeInstruction": [
-    "# 本次网站运行配置（最高优先级）",
+    "# 本次 Toy 运行配置（最高优先级）",
     "",
     "不要运行脚本，不要讨论 Skill。只执行下面已经选定的配置，并只输出最终句子。"
   ],

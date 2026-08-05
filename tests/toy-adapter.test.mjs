@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { generateStandaloneText } from "../app/toy-local-generator.ts";
+import { generateStandaloneText } from "../toy/src/toy-local-generator.ts";
 
 const root = new URL("../", import.meta.url);
 
 test("Toy adapter is a static standalone bundle", async () => {
   const html = await readFile(new URL("toy/index.html", root), "utf8");
-  const page = await readFile(new URL("app/page.tsx", root), "utf8");
-  const localGenerator = await readFile(new URL("app/toy-local-generator.ts", root), "utf8");
+  const page = await readFile(new URL("toy/src/Home.tsx", root), "utf8");
+  const localGenerator = await readFile(new URL("toy/src/toy-local-generator.ts", root), "utf8");
   const config = await readFile(new URL("toy/vite.config.ts", root), "utf8");
 
   assert.match(html, /<div id="root"><\/div>/);
