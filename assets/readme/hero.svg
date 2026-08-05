@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">胡言乱语生成器 Toy</title>
+  <desc id="desc">Bilibili Toy 版胡言乱语生成器，让句子先听懂输入，再故意讲歪。</desc>
+  <rect width="1200" height="360" rx="28" fill="#f9f8f6"/>
+  <path d="M64 52H1136" stroke="#171613" stroke-width="2" opacity=".12"/>
+  <text x="64" y="104" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="20" font-weight="600" letter-spacing="3">TOY / 两种模式 / 三档长度</text>
+  <text x="64" y="184" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="68" font-weight="700">胡言乱语生成器</text>
+  <text x="68" y="226" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="25">让句子先听懂你，再故意讲歪。</text>
+  <path d="M68 262H177" stroke="#c0392b" stroke-width="5"/>
+  <g transform="translate(710 65)">
+    <rect width="426" height="250" rx="18" fill="#f1efea" stroke="#171613" stroke-width="2"/>
+    <text x="30" y="45" fill="#9a948a" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18">TOY / 生成预览</text>
+    <path d="M30 78H396" stroke="#171613" stroke-width="2" opacity=".14"/>
+    <text x="30" y="111" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">模式</text>
+    <rect x="82" y="88" width="70" height="34" rx="17" fill="#c0392b"/>
+    <text x="101" y="111" fill="#fff" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17" font-weight="700">翻译</text>
+    <text x="174" y="111" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">回答</text>
+    <text x="30" y="150" fill="#9a948a" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="17">长度</text>
+    <circle cx="92" cy="145" r="7" fill="#c0392b"/>
+    <circle cx="166" cy="145" r="7" fill="#171613"/>
+    <circle cx="240" cy="145" r="7" fill="#171613"/>
+    <path d="M92 145H240" stroke="#171613" stroke-width="2" opacity=".18"/>
+    <text x="78" y="174" fill="#171613" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="16" font-weight="700">精辟</text>
+    <text x="151" y="174" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="16">中等</text>
+    <text x="225" y="174" fill="#6f6a62" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="16">正常</text>
+    <path d="M30 184H396" stroke="#171613" stroke-width="2" opacity=".10"/>
+    <text x="30" y="210" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="18" font-weight="700">我虽然困得很有原则，但身体为了全勤</text>
+    <text x="30" y="235" fill="#171613" font-family="'Songti SC','STSong','SimSun',serif" font-size="18" font-weight="700">还是擅自把我送到了工位。</text>
+  </g>
+</svg>
