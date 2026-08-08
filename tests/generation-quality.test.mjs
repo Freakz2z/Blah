@@ -33,10 +33,12 @@ import {
 } from "../shared/generate/validation.ts";
 import { fallbackForLength } from "../shared/generate/fallback.ts";
 import {
+  isContextlessVeracityTopic,
   isSensitiveRealWorldTopic,
   isUnsafeGeneratedText,
   safeFallbackForLength,
   sensitiveFallbackForLength,
+  veracityFallbackForLength,
 } from "../shared/generate/safety.ts";
 import {
   TREND_LIBRARY,
@@ -151,6 +153,18 @@ test("real-world harm topics receive a calm non-joking response", () => {
     const text = sensitiveFallbackForLength(length);
     assert.equal(isUnsafeGeneratedText(text), false);
     assert.match(text, /认真|现实/);
+  }
+});
+
+test("contextless truth questions get an honest deterministic answer", () => {
+  assert.equal(isContextlessVeracityTopic("这个结果是真是假"), true);
+  assert.equal(isContextlessVeracityTopic("太阳是不是恒星"), false);
+  for (const length of ["精辟", "中等", "正常"]) {
+    const text = veracityFallbackForLength(length);
+    assert.equal(
+      validateGeneratedText(text, "这个结果是真是假", "正常", length, "回答"),
+      null,
+    );
   }
 });
 

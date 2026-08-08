@@ -21,6 +21,8 @@ const SENSITIVE_REAL_WORLD_PATTERNS = [
   /(?:车祸|交通事故|空难|事故现场|地震|火灾|洪水|灾难|失踪)/iu,
   /(?:住院|抢救|急救|重病|癌症|去世|死亡|葬礼|遗体|严重受伤)/iu,
 ];
+const CONTEXTLESS_VERACITY_PATTERN =
+  /(?:这个|这份|该|上述|结果|消息|说法|内容).{0,12}(?:是真是假|真假|真不真|是否真实|靠谱吗|可信|对不对)/;
 
 export function isUnsafeGeneratedText(text: string): boolean {
   const normalized = text.trim();
@@ -31,6 +33,23 @@ export function isSensitiveRealWorldTopic(text: string): boolean {
   const normalized = text.trim();
   return normalized.length > 0
     && SENSITIVE_REAL_WORLD_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isContextlessVeracityTopic(text: string): boolean {
+  return CONTEXTLESS_VERACITY_PATTERN.test(text.trim());
+}
+
+/** Honest but still playful response when the user asks for a truth judgment
+ * without supplying evidence that could support one. */
+export function veracityFallbackForLength(generationLength: GenerationLength): string {
+  switch (generationLength) {
+    case "精辟":
+      return "真假不能确定。";
+    case "中等":
+      return "结果还不能确定，得先核对证据。";
+    case "正常":
+      return "还不能确定，得先核对证据，真假不会自己主动举手作证。";
+  }
 }
 
 /** Calm response for allowed but inappropriate-to-joke-about real-world harm. */

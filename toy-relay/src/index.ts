@@ -10,10 +10,12 @@ import {
   validateGeneratedText,
 } from "../../shared/generate/quality.ts";
 import {
+  isContextlessVeracityTopic,
   isSensitiveRealWorldTopic,
   isUnsafeGeneratedText,
   safeFallbackForLength,
   sensitiveFallbackForLength,
+  veracityFallbackForLength,
 } from "../../shared/generate/safety.ts";
 import {
   normalizeGenerationLength,
@@ -427,10 +429,8 @@ async function generateWithProvider(
     if (result.status !== "fulfilled") return;
     const text = acceptCompletion(result.value, topic, generationLength, mode);
     if (!text) return;
-    // The bare topic (not the mode-prefixed history key) is what the exemplar
-    // exclusion in recentSimilarity matches against — a prefixed key would let
-    // the model's verbatim exemplar plagiarism through as a "repeat" and force
-    // the fallback for showcase topics.
+    // Keep the history key on the bare topic so repeated results for the same
+    // input compete against one another regardless of mode prompt wording.
     const similarity = recentSimilarity(topic, DEFAULT_MOOD, text);
     if (similarity > 0.5) return;
     const { score, topicHit, length } = scoreGeneratedText(
@@ -580,6 +580,12 @@ const worker = {
       return jsonResponse(request, env, {
         text: sensitiveFallbackForLength(generationLength),
         mechanism: "安全兜底",
+      });
+    }
+    if (mode === "回答" && isContextlessVeracityTopic(topic)) {
+      return jsonResponse(request, env, {
+        text: veracityFallbackForLength(generationLength),
+        mechanism: "事实兜底",
       });
     }
     const providers = configuredProviders(env);

@@ -7,6 +7,7 @@
  * 「奶茶」or「ChatGPT」is never penalized for mentioning itself. */
 
 import { EXEMPLAR_SENTENCES } from "./prompts.ts";
+import { isContextlessVeracityTopic } from "./safety.ts";
 import {
   GENERATION_LENGTH_LIMITS,
   type GenerationLength,
@@ -63,8 +64,6 @@ const FACT_PHRASE_GROUPS = [
   ["失败", "没成功"],
 ];
 const QUESTION_PREFIX_RE = /^(为什么|为何|怎么|怎样|如何|请问|能不能|可不可以|是不是|是否)/;
-const CONTEXTLESS_VERACITY_RE =
-  /(?:这个|这份|该|上述|结果|消息|说法|内容).{0,12}(?:是真是假|真假|真不真|是否真实|靠谱吗|可信|对不对)/;
 const UNCERTAINTY_MARKER_RE =
   /(?:(?:还|暂时)?(?:不能|无法|难以|不好)(?:确定|判断|断定)|需要.{0,6}(?:证据|核对|验证)|(?:得|要)先.{0,6}(?:核对|验证)|要看.{0,6}(?:证据|来源))/;
 
@@ -242,7 +241,7 @@ export function validateGeneratedText(
   if (mode === "翻译" && contradictsMissingObject(text, topic)) return "mode";
   if (
     mode === "回答"
-    && CONTEXTLESS_VERACITY_RE.test(topic)
+    && isContextlessVeracityTopic(topic)
     && !UNCERTAINTY_MARKER_RE.test(text)
   ) return "mode";
 
