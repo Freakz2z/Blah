@@ -111,13 +111,18 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 /* ── Composer — 单一输入区 + 下方「生成」按钮 ────── */
 .composer-block {
-  margin-top: auto; /* 钉在底部：结果区在上方，中间留白自动分配 */
-  display: grid;
+  flex: 1; /* 占满空区：结果区下方到页面底部的空间都归输入区 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
 .composer {
-  display: grid;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
@@ -237,14 +242,18 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 /* 输入行：文本框 + 发送按钮并排 */
 .composer-input-row {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 10px;
 }
 
 .composer-input-row .topic-input {
   flex: 1;
   min-width: 0;
+  /* 输入区占满 composer 剩余高度；内容超长时在框内滚动 */
+  max-height: none;
   border-bottom: none; /* composer 自带外框，去掉输入框下划线 */
 }
 
@@ -298,10 +307,29 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   gap: 12px;
 }
 
-.history-header-actions {
+/* ── 历史记录（我的页内嵌） ───────────────────── */
+.history-section {
+  display: grid;
+  gap: 10px;
+}
+
+.history-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-section-actions {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.history-section-actions > button {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .history-count-label {
@@ -310,14 +338,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-weight: 400;
   letter-spacing: var(--ls-base);
   font-variant-numeric: tabular-nums;
-}
-
-.history-header-actions > button:first-of-type {
-  width: auto;
-  height: auto;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .history-empty {
@@ -335,7 +355,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 .history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: stretch;
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   transition: border-color 160ms ease, background-color 160ms ease;
@@ -384,6 +404,18 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-size: 11px;
   line-height: 1.4;
 }
+
+.history-item-board {
+  width: 52px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--ls-base);
+  transition: color 160ms ease;
+}
+
+.history-item-board:hover:not(:disabled) { color: var(--accent); }
+.history-item-board:disabled { cursor: wait; opacity: 0.5; }
 
 .history-item-delete {
   width: 38px;
@@ -586,30 +618,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   }
 }
 
-/* ── 投上榜 (home result) ──────────────────────── */
-.board-submit-row {
-  display: flex;
-  justify-content: center;
-}
-
-.board-submit-button {
-  padding: 6px 16px;
-  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
-  color: var(--fg-muted);
-  font-size: 12px;
-  letter-spacing: var(--ls-base);
-  transition: color 200ms ease, border-color 200ms ease;
-}
-
-@media (hover: hover) {
-  .board-submit-button:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-}
-
-.board-submit-button:disabled { cursor: wait; opacity: 0.5; }
-
 /* ── Tab pages (排行 / 我的) ───────────────────── */
 .tab-page {
   width: 100%;
@@ -740,121 +748,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 .profile-login-button:focus-visible { outline-offset: 2px; }
 
-/* ── 我的 entry list ──────────────────────────── */
-.mine-entries {
-  display: grid;
-  gap: 10px;
-}
-
-.mine-entry {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  text-align: left;
-  transition: border-color 160ms ease, background-color 160ms ease;
-}
-
-@media (hover: hover) {
-  .mine-entry:hover {
-    border-color: color-mix(in srgb, var(--fg) 30%, transparent);
-    background: color-mix(in srgb, var(--fg) 4%, transparent);
-  }
-}
-
-.mine-entry-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
-  border-radius: 50%;
-  color: var(--fg-muted);
-  flex-shrink: 0;
-}
-
-.mine-entry-icon svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-}
-
-.mine-entry-label {
-  color: var(--fg);
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.mine-entry-value {
-  margin-left: auto;
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.mine-entry-chevron {
-  color: var(--fg-muted);
-  font-size: 20px;
-  line-height: 1;
-}
-
-/* ── Sub page (历史记录) ──────────────────────── */
-.sub-page {
-  flex: 1;
-  display: grid;
-  align-content: flex-start;
-  gap: 16px;
-  width: 100%;
-}
-
-.sub-page-header {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-}
-
-.sub-page-title {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: var(--ls-wide);
-  text-align: center;
-}
-
-.sub-page-back {
-  justify-self: start;
-  color: var(--fg-muted);
-  font-size: 13px;
-  letter-spacing: var(--ls-base);
-  transition: color 180ms ease;
-}
-
-@media (hover: hover) {
-  .sub-page-back:hover { color: var(--fg); }
-}
-
-.sub-page-actions {
-  justify-self: end;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.sub-page-actions > button {
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 600;
-}
-
 .setting-block {
   min-inline-size: 0;
   margin: 0;
@@ -936,8 +829,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .topic-input {
   display: block;
   width: 100%;
-  /* 高度由 JS 跟随内容自适应：1 行 → 1 行高，最多 4 行（line-height 1.3），
-     再多就在容器内滚动，绝不横向拓展 */
+  /* 高度由 composer 的 flex 布局决定（占满空区）；这里只保证最小可用高度，
+     内容超长时在框内滚动，绝不横向拓展 */
   min-height: calc(1.3em + 16px);
   max-height: calc(5.2em + 16px);
   padding: 8px 0;
@@ -1135,29 +1028,23 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   }
 }
 
-.result-actions button.copied,
-.result-actions button.saved {
+.result-actions button.copied {
   color: var(--success);
 }
-.result-actions button.copied::after,
-.result-actions button.saved::after {
+.result-actions button.copied::after {
   background: var(--success);
   opacity: 1;
   transform: scaleX(1);
 }
 
-.result-actions button.copy-failed,
-.result-actions button.save-failed {
+.result-actions button.copy-failed {
   color: var(--accent);
 }
-.result-actions button.copy-failed::after,
-.result-actions button.save-failed::after {
+.result-actions button.copy-failed::after {
   background: var(--accent);
   opacity: 1;
   transform: scaleX(1);
 }
-
-.result-actions button.saving { cursor: wait; opacity: 0.5; }
 
 .result-actions button:disabled { cursor: wait; opacity: 0.4; }
 

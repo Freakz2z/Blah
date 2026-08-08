@@ -11,6 +11,7 @@ test("fetchUserProfile returns the normalized profile", async () => {
   assert.deepEqual(await fetchUserProfile(sdk), {
     nickname: "张三",
     avatar: "//p0.hdslb.com/a.png",
+    toyOpenId: "openid",
   });
 });
 

@@ -1,10 +1,11 @@
 /**
  * Cloud-storage-backed generation history sync.
  *
- * History lives per (logged-in user, Toy) in the Toy JS SDK's cloud storage.
- * One key per entry — `h-0`…`h-19`, newest first — because a single key's
- * 1024-byte value cap cannot hold all 20 entries and per-entry keys preserve
- * the same 20-item limit as the localStorage mirror.
+ * History lives per (logged-in user, Toy) in the Toy JS SDK's cloud storage —
+ * the 128-key-per-user quota comfortably holds the 20 history entries plus a
+ * few preference keys. One key per entry — `h-0`…`h-19`, newest first —
+ * because a single key's 1024-byte value cap cannot hold all 20 entries and
+ * per-entry keys preserve the same 20-item limit as the localStorage mirror.
  *
  * The SDK object is injectable for tests; production defaults to `window.toy`.
  * Every entry point degrades silently: no SDK, not logged in, or an API
@@ -24,7 +25,7 @@ export const CLOUD_HISTORY_KEY_PREFIX = "h-";
  * growth and keeps worst-case Chinese-heavy entries comfortably inside. */
 const MAX_CLOUD_ENTRY_BYTES = 900;
 
-/** A hanging JSB bridge must not block the localStorage fallback forever. */
+/** A hanging JSB bridge must not block the history load forever. */
 export const CLOUD_LOAD_TIMEOUT_MS = 4000;
 
 export interface ToyHistorySdk {
@@ -121,8 +122,8 @@ export async function persistCloudHistory(
 }
 
 /** Load the cloud history. Returns `null` when unavailable (no SDK, not logged
- * in, timed out, or the call failed) so the caller can fall back to
- * localStorage — an empty cloud record is authoritative and returns `[]`. */
+ * in, timed out, or the call failed) so the caller can fall back to an empty
+ * history — an empty cloud record is authoritative and returns `[]`. */
 export async function loadCloudHistory(
   sdk: ToyHistorySdk | null = toySdk(),
   timeoutMs: number = CLOUD_LOAD_TIMEOUT_MS,

@@ -10,6 +10,9 @@
 export interface ToyUserProfile {
   nickname: string;
   avatar: string;
+  /** Stable pseudonymous per-Toy user id — the key for relay-backed history.
+   * Absent when the platform's OpenID mode is off. */
+  toyOpenId?: string;
 }
 
 export interface ToyProfileSdk {
@@ -44,7 +47,11 @@ export async function fetchUserProfile(
     ) {
       return null;
     }
-    return { nickname: profile.nickname, avatar: profile.avatar };
+    const result: ToyUserProfile = { nickname: profile.nickname, avatar: profile.avatar };
+    if (typeof profile.toyOpenId === "string" && profile.toyOpenId) {
+      result.toyOpenId = profile.toyOpenId;
+    }
+    return result;
   } catch {
     return null;
   }

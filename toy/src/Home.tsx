@@ -22,6 +22,17 @@ import {
   type SentenceRow,
 } from "./sentences";
 import { fetchUserProfile, type ToyUserProfile } from "./profile";
+import {
+  loadCountCloud,
+  loadThemeCloud,
+  readCountLocal,
+  readThemeLocal,
+  saveCountCloud,
+  saveThemeCloud,
+  writeCountLocal,
+  writeThemeLocal,
+  type ThemePreference,
+} from "./preferences";
 import { CHANGELOG } from "./changelog";
 import { generateStandaloneText } from "./toy-local-generator";
 import { MAX_TOPIC_LENGTH } from "../../shared/generate/validation.ts";
@@ -42,13 +53,7 @@ const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
 const MAX_CHARS = MAX_TOPIC_LENGTH;
 const LEADERBOARD_SUBMIT_INTERVAL_MS = 10_000;
 
-const CANVAS_SERIF =
-  "'Noto Serif SC','Source Han Serif SC','Songti SC','STSong','SimSun',serif";
-// 保存图片同样统一衬线字形
-const CANVAS_SANS = CANVAS_SERIF;
-
 type UsageStats = { generations: number };
-const TOY_STATS_STORAGE_KEY = "blahblah:toy-generation-count:v1";
 
 type BlahBlahRuntimeWindow = Window & {
   __BLAHBLAH_TOY_RELAY_URL__?: string;
@@ -75,25 +80,6 @@ function toyRelayUrl(): string {
   return ((window as BlahBlahRuntimeWindow).__BLAHBLAH_TOY_RELAY_URL__ ?? "").replace(/\/+$/, "");
 }
 
-function readGenerationCount(): number {
-  try {
-    const stored = Number(window.localStorage.getItem(TOY_STATS_STORAGE_KEY) ?? "0");
-    return Number.isSafeInteger(stored) && stored >= 0 ? stored : 0;
-  } catch {
-    return 0;
-  }
-}
-
-function incrementGenerationCount(): number {
-  const next = readGenerationCount() + 1;
-  try {
-    window.localStorage.setItem(TOY_STATS_STORAGE_KEY, String(next));
-  } catch {
-    // Private browsing and full storage must not block local generation.
-  }
-  return next;
-}
-
 function createHistoryId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -112,12 +98,9 @@ export default function Home() {
   const [thinkingStep, setThinkingStep] = useState(0);
   const [message, setMessage] = useState("");
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [animKey, setAnimKey] = useState(0);
-  const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
+  const [theme, setTheme] = useState<ThemePreference>(() => readThemeLocal());
   const [activeTab, setActiveTab] = useState<"home" | "rank" | "mine">("home");
-  /** Drilled-down sub-page within the 我的 tab (hides the bottom nav). */
-  const [subPage, setSubPage] = useState<"none" | "history">("none");
   /** Whether the composer's mode/length options are expanded. */
   const [settingsOpen, setSettingsOpen] = useState(false);
   /** Which side the mode label slides in from after a swipe/arrow change. */
@@ -162,7 +145,6 @@ export default function Home() {
   const changelogWasOpenRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const copyTimerRef = useRef<number | null>(null);
-  const saveTimerRef = useRef<number | null>(null);
   const submitTimerRef = useRef<number | null>(null);
   /** How many `h-N` slots the cloud currently holds, so shrinking history can
    * trim the orphaned keys. */
@@ -177,8 +159,35 @@ export default function Home() {
   /** Lets a stale quality-board refresh know it has been superseded. */
   const sentenceBoardSeqRef = useRef(0);
   useEffect(() => {
-    const timer = window.setTimeout(() => setStats({ generations: readGenerationCount() }), 0);
+    const timer = window.setTimeout(() => setStats({ generations: readCountLocal() }), 0);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  /* Cross-device sync: the cloud (per-user) values win over the local cache
+     when they differ — the theme and the generation count follow the login. */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [cloudTheme, cloudCount] = await Promise.all([
+        loadThemeCloud(),
+        loadCountCloud(),
+      ]);
+      if (cancelled) return;
+      if (cloudTheme) {
+        setTheme(cloudTheme);
+        writeThemeLocal(cloudTheme);
+      }
+      if (cloudCount !== null) {
+        const local = readCountLocal();
+        if (cloudCount > local) {
+          writeCountLocal(cloudCount);
+          setStats({ generations: cloudCount });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /* Best-effort login detection: reuses an existing profile consent without a
@@ -188,7 +197,8 @@ export default function Home() {
   }, []);
 
   /* Generation history is login-only cloud sync (no localStorage fallback):
-     guests simply have no history. History text never reaches the relay or
+     guests simply have no history. History lives in the SDK cloud storage
+     (per-user, within the 128-key quota). History text never reaches the
      stats API. */
   useEffect(() => {
     let cancelled = false;
@@ -238,7 +248,6 @@ export default function Home() {
   useEffect(
     () => () => {
       if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
       if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
     },
     [],
@@ -291,18 +300,6 @@ export default function Home() {
   }, [helpOpen, changelogOpen]);
 
   /* ── Generate ────────────────────────────────── */
-  /** Auto-grow the topic textarea with content: 1 line → 1-line height, up to
-   * 4 lines, then it scrolls inside the box (CSS caps max-height). */
-  const resizeTopicInput = useCallback(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "home") resizeTopicInput();
-  }, [activeTab, topic, resizeTopicInput]);
   const generate = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
@@ -383,8 +380,10 @@ export default function Home() {
         };
         if (generatedMechanism) historyItem.mechanism = generatedMechanism;
         setHistory((items) => prependHistory(items, historyItem));
-        const nextCount = incrementGenerationCount();
+        const nextCount = readCountLocal() + 1;
+        writeCountLocal(nextCount);
         setStats({ generations: nextCount });
+        void saveCountCloud(nextCount);
         // Best-effort week-leaderboard report, coarsely throttled; never
         // blocks the result shown.
         const now = Date.now();
@@ -451,7 +450,6 @@ export default function Home() {
     setMessage("");
     setCopyState("idle");
     setAnimKey((key) => key + 1);
-    setSubPage("none");
     setActiveTab("home");
   }, []);
 
@@ -511,17 +509,20 @@ export default function Home() {
     }
   }, [activeTab, boardType, period, refreshLeaderboard, refreshSentenceBoard]);
 
-  /* 投上榜 — submit the current result to the 胡言乱语排行榜 (login only). */
-  const submitToBoard = useCallback(async () => {
-    const relay = toyRelayUrl();
-    if (!relay || !profile || !result || submitState === "sending") return;
-    setSubmitState("sending");
-    const ok = await submitSentence(result, profile, relay);
-    setSubmitState(ok ? "sent" : "failed");
-    if (ok && activeTab === "rank" && boardType === "quality") void refreshSentenceBoard();
-    if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
-    submitTimerRef.current = window.setTimeout(() => setSubmitState("idle"), 2400);
-  }, [profile, result, submitState, activeTab, boardType, refreshSentenceBoard]);
+  /* 投上榜 — submit a history item's text to the 胡言乱语排行榜 (login only). */
+  const submitToBoard = useCallback(
+    async (text: string) => {
+      const relay = toyRelayUrl();
+      if (!relay || !profile || !text || submitState === "sending") return;
+      setSubmitState("sending");
+      const ok = await submitSentence(text, profile, relay);
+      setSubmitState(ok ? "sent" : "failed");
+      if (ok && activeTab === "rank" && boardType === "quality") void refreshSentenceBoard();
+      if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
+      submitTimerRef.current = window.setTimeout(() => setSubmitState("idle"), 2400);
+    },
+    [profile, submitState, activeTab, boardType, refreshSentenceBoard],
+  );
 
   const handleRate = useCallback(
     async (id: string, rating: number) => {
@@ -563,91 +564,6 @@ export default function Home() {
     copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
   }, [result]);
 
-  const saveImage = useCallback(async () => {
-    if (!result || saveState === "saving") return;
-    setSaveState("saving");
-
-    const finish = (state: "saved" | "failed") => {
-      setSaveState(state);
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(() => setSaveState("idle"), 1800);
-    };
-
-    await document.fonts.ready;
-
-    const css = getComputedStyle(document.documentElement);
-    const bg = css.getPropertyValue("--bg").trim() || "#f9f8f6";
-    const fg = css.getPropertyValue("--fg").trim() || "#171613";
-    const fgMuted = css.getPropertyValue("--fg-muted").trim() || "#716c62";
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) { finish("failed"); return; }
-
-    const padding = 48;
-    const fontSize = 52;
-    const footerHeight = 72;
-    ctx.font = `600 ${fontSize}px ${CANVAS_SERIF}`;
-
-    const lines = wrapText(ctx, result, 720);
-    const lineHeight = fontSize * 1.5;
-    const textHeight = lines.length * lineHeight;
-    const realWidth = Math.max(...lines.map((l) => ctx.measureText(l).width));
-
-    const canvasWidth = Math.max(Math.min(realWidth, 720), 384) + padding * 2;
-    const canvasHeight = Math.max(textHeight + padding * 2 + footerHeight, 420);
-
-    const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
-    canvas.width = Math.round(canvasWidth * dpr);
-    canvas.height = Math.round(canvasHeight * dpr);
-    ctx.scale(dpr, dpr);
-
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-    /* body — centered in the area above the footer */
-    ctx.fillStyle = fg;
-    ctx.font = `600 ${fontSize}px ${CANVAS_SERIF}`;
-    ctx.textBaseline = "top";
-    ctx.textAlign = "center";
-    const bodyTop = (canvasHeight - footerHeight - textHeight) / 2;
-    lines.forEach((line, i) => {
-      ctx.fillText(line, canvasWidth / 2, bodyTop + i * lineHeight);
-    });
-
-    /* footer — separator + attribution */
-    const footerTop = canvasHeight - footerHeight;
-    ctx.save();
-    ctx.globalAlpha = 0.08;
-    ctx.fillStyle = fg;
-    ctx.fillRect(padding, footerTop, canvasWidth - padding * 2, 1);
-    ctx.restore();
-
-    ctx.font = `400 20px ${CANVAS_SANS}`;
-    ctx.fillStyle = fgMuted;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "left";
-    ctx.fillText(
-      `${mode}「${topic.trim()}」`,
-      padding,
-      footerTop + footerHeight / 2,
-    );
-    ctx.textAlign = "right";
-    ctx.fillText("胡言乱语生成器", canvasWidth - padding, footerTop + footerHeight / 2);
-
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/png"),
-    );
-    if (!blob) { finish("failed"); return; }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `胡言乱语-${mode}-${topic.trim().replace(/[\\/:*?"<>|]/g, "")}.png`;
-    a.click();
-    URL.revokeObjectURL(url);
-    finish("saved");
-  }, [result, saveState, topic, mode]);
-
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
   const hasResult = result !== "";
@@ -657,60 +573,6 @@ export default function Home() {
     <div className="app-shell">
       <div className="page-frame">
         {/* ── Main Content ──────────────────────── */}
-        {subPage === "history" ? (
-          <section className="sub-page" aria-label="历史记录">
-            <div className="sub-page-header">
-              <button
-                type="button"
-                className="sub-page-back"
-                onClick={() => setSubPage("none")}
-                aria-label="返回"
-              >
-                ← 返回
-              </button>
-              <h2 className="sub-page-title">历史记录</h2>
-              <div className="sub-page-actions">
-                <span className="history-count-label">{history.length}/{HISTORY_LIMIT}</span>
-                {history.length > 0 && (
-                  <button type="button" onClick={clearHistory}>清空</button>
-                )}
-              </div>
-            </div>
-            {history.length === 0 ? (
-              <p className="history-empty">还没有生成记录</p>
-            ) : (
-              <div className="history-list" role="list" aria-label="生成历史">
-                {history.map((item) => (
-                  <div className="history-item" role="listitem" key={item.id}>
-                    <button
-                      type="button"
-                      className="history-item-main"
-                      onClick={() => restoreHistory(item)}
-                      aria-label={`恢复 ${item.text}`}
-                    >
-                      <span className="history-item-meta">
-                        <span>{item.mode} · {item.length}</span>
-                        <time dateTime={new Date(item.createdAt).toISOString()}>
-                          {formatHistoryTime(item.createdAt)}
-                        </time>
-                      </span>
-                      <span className="history-item-result">{item.text}</span>
-                      <span className="history-item-topic">{item.topic}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="history-item-delete"
-                      onClick={() => removeHistoryItem(item.id)}
-                      aria-label={`删除 ${item.text}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        ) : (
         <div className={`main-content tab-${activeTab}`}>
           {activeTab === "home" && (
             <>
@@ -807,47 +669,7 @@ export default function Home() {
                         ? "复制失败"
                         : "复制"}
                   </button>
-                  <button
-                    type="button"
-                    disabled={status === "thinking" || saveState === "saving"}
-                    onClick={saveImage}
-                    className={
-                      saveState === "saving"
-                        ? "saving"
-                        : saveState === "saved"
-                          ? "saved"
-                          : saveState === "failed"
-                            ? "save-failed"
-                            : ""
-                    }
-                  >
-                    {saveState === "saving"
-                      ? "保存中…"
-                      : saveState === "saved"
-                        ? "已保存"
-                        : saveState === "failed"
-                          ? "保存失败"
-                          : "保存图片"}
-                  </button>
                 </div>
-                {profile && toyRelayUrl() && (
-                  <div className="board-submit-row">
-                    <button
-                      type="button"
-                      className="board-submit-button"
-                      disabled={status === "thinking" || submitState === "sending"}
-                      onClick={() => void submitToBoard()}
-                    >
-                      {submitState === "sending"
-                        ? "上榜中…"
-                        : submitState === "sent"
-                          ? "已投给胡言乱语榜"
-                          : submitState === "failed"
-                            ? "上榜失败，再试一次"
-                            : "投给胡言乱语榜"}
-                    </button>
-                  </div>
-                )}
               </>
             )}
           </section>
@@ -1220,31 +1042,6 @@ export default function Home() {
                 )}
               </div>
 
-              <div className="mine-entries">
-                <button
-                  type="button"
-                  className="mine-entry"
-                  onClick={() => setSubPage("history")}
-                  aria-label="打开历史记录"
-                >
-                  <span className="mine-entry-icon" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M12 7v5l3 2M5.4 5.4A9 9 0 1 1 3 12" />
-                      <path d="M3 5v4h4" />
-                    </svg>
-                  </span>
-                  <span className="mine-entry-label">历史记录</span>
-                  <span className="mine-entry-value">
-                    {!profile
-                      ? "登录后可见"
-                      : history.length
-                        ? `${history.length}/${HISTORY_LIMIT}`
-                        : "暂无"}
-                  </span>
-                  <span className="mine-entry-chevron" aria-hidden="true">›</span>
-                </button>
-              </div>
-
               <fieldset className="setting-block theme-block">
                 <legend className="micro-label">主题设置</legend>
                 <div className="theme-options" role="radiogroup" aria-label="主题设置">
@@ -1256,7 +1053,11 @@ export default function Home() {
                       className={`theme-option${theme === option.value ? " active" : ""}`}
                       aria-checked={theme === option.value}
                       tabIndex={theme === option.value ? 0 : -1}
-                      onClick={() => setTheme(option.value)}
+                      onClick={() => {
+                        setTheme(option.value);
+                        writeThemeLocal(option.value);
+                        void saveThemeCloud(option.value);
+                      }}
                       onKeyDown={(event) => {
                         const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
                           ? 1
@@ -1266,7 +1067,10 @@ export default function Home() {
                         if (!direction) return;
                         event.preventDefault();
                         const nextIndex = (index + direction + THEME_OPTIONS.length) % THEME_OPTIONS.length;
-                        setTheme(THEME_OPTIONS[nextIndex].value);
+                        const nextTheme = THEME_OPTIONS[nextIndex].value;
+                        setTheme(nextTheme);
+                        writeThemeLocal(nextTheme);
+                        void saveThemeCloud(nextTheme);
                         const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".theme-option");
                         options?.[nextIndex]?.focus();
                       }}
@@ -1276,13 +1080,73 @@ export default function Home() {
                   ))}
                 </div>
               </fieldset>
+
+              <section className="history-section" aria-label="历史记录">
+                <div className="history-section-header">
+                  <h3 className="micro-label">历史记录</h3>
+                  <div className="history-section-actions">
+                    <span className="history-count-label">
+                      {profile ? `${history.length}/${HISTORY_LIMIT}` : "登录后可见"}
+                    </span>
+                    {profile && history.length > 0 && (
+                      <button type="button" onClick={clearHistory}>清空</button>
+                    )}
+                  </div>
+                </div>
+                {!profile ? (
+                  <p className="history-empty">登录后可查看和同步历史记录</p>
+                ) : history.length === 0 ? (
+                  <p className="history-empty">还没有生成记录</p>
+                ) : (
+                  <div className="history-list" role="list" aria-label="生成历史">
+                    {history.map((item) => (
+                      <div className="history-item" role="listitem" key={item.id}>
+                        <button
+                          type="button"
+                          className="history-item-main"
+                          onClick={() => restoreHistory(item)}
+                          aria-label={`恢复 ${item.text}`}
+                        >
+                          <span className="history-item-meta">
+                            <span>{item.mode} · {item.length}</span>
+                            <time dateTime={new Date(item.createdAt).toISOString()}>
+                              {formatHistoryTime(item.createdAt)}
+                            </time>
+                          </span>
+                          <span className="history-item-result">{item.text}</span>
+                          <span className="history-item-topic">{item.topic}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="history-item-board"
+                          disabled={submitState === "sending"}
+                          onClick={() => void submitToBoard(item.text)}
+                          aria-label={`投给胡言乱语榜：${item.text}`}
+                        >
+                          {submitState === "sending"
+                            ? "上榜中…"
+                            : submitState === "sent"
+                              ? "已投榜"
+                              : "投榜"}
+                        </button>
+                        <button
+                          type="button"
+                          className="history-item-delete"
+                          onClick={() => removeHistoryItem(item.id)}
+                          aria-label={`删除 ${item.text}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </section>
           )}
         </div>
-        )}
       </div>
 
-      {subPage === "none" && (
       <nav className="tab-bar" aria-label="页面导航">
           <button
             type="button"
@@ -1324,7 +1188,6 @@ export default function Home() {
             <span>我的</span>
           </button>
       </nav>
-      )}
 
       {/* ── 游戏说明 modal ──────────────────────── */}
       {helpOpen && (
@@ -1355,7 +1218,7 @@ export default function Home() {
                   <li>在输入框写一句话、一个问题或一个灵感。</li>
                   <li>点输入框上方的「翻译 · 正常」按钮，切换模式和长度。</li>
                   <li>点「开始生成」，得到一句胡言乱语。</li>
-                  <li>生成后可以复制、保存成图片，或投给胡言乱语榜。</li>
+                  <li>生成后可以复制，或投给胡言乱语榜。</li>
                 </ol>
               </section>
               <section className="help-section">
@@ -1439,26 +1302,4 @@ export default function Home() {
       )}
     </div>
   );
-}
-
-
-/* ── Canvas text wrapping helper ──────────────── */
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-): string[] {
-  const lines: string[] = [];
-  let current = "";
-  for (const char of text) {
-    const test = current + char;
-    if (ctx.measureText(test).width > maxWidth && current.length > 0) {
-      lines.push(current);
-      current = char;
-    } else {
-      current = test;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
 }
