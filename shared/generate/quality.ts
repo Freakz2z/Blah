@@ -250,6 +250,11 @@ export function validateGeneratedText(
     && isContextlessVeracityTopic(topic)
     && !UNCERTAINTY_MARKER_RE.test(text)
   ) return "mode";
+  if (mode === "自由" && generationLength === "精辟") {
+    const compactTopic = topic.replace(/[，。！？、；：,.!?;:\s]/gu, "");
+    const compactLength = Array.from(compactTopic).length;
+    if (compactLength >= 2 && compactLength <= 6 && !text.includes(compactTopic)) return "mode";
+  }
 
   if (generationLength !== "精辟") {
     if (mode === "翻译") {

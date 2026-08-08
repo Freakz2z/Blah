@@ -415,6 +415,11 @@ test("free mode accepts riffs, rejects non-sequiturs and echoes", () => {
   assert.equal(validateGeneratedText(echo, topic, "正常", "中等", "自由"), "mode");
 });
 
+test("concise free mode keeps a short abstract topic intact", () => {
+  assert.equal(validateGeneratedText("二叉树只会倒着长。", "二叉树", "正常", "精辟", "自由"), null);
+  assert.equal(validateGeneratedText("树根管得太多。", "二叉树", "正常", "精辟", "自由"), "mode");
+});
+
 test("free fallbacks stay valid riffs within every length contract", () => {
   for (const topic of ["为什么周一总是来得这么快", "我今天不想上班", "猫"]) {
     for (const length of ["精辟", "中等", "正常"]) {
