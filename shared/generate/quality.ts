@@ -64,6 +64,8 @@ const FACT_PHRASE_GROUPS = [
   ["失败", "没成功"],
 ];
 const QUESTION_PREFIX_RE = /^(为什么|为何|怎么|怎样|如何|请问|能不能|可不可以|是不是|是否)/;
+const HOW_QUESTION_RE = /(?:怎么|怎样|如何|怎么办)/;
+const ACTIONABLE_ANSWER_RE = /(?:^|[，,])(?:先|可以|把|让|只要|试试|别|关掉|放下|换成|改成)/;
 const UNCERTAINTY_MARKER_RE =
   /(?:(?:还|暂时)?(?:不能|无法|难以|不好)(?:确定|判断|断定)|需要.{0,6}(?:证据|核对|验证)|(?:得|要)先.{0,6}(?:核对|验证)|要看.{0,6}(?:证据|来源))/;
 
@@ -292,9 +294,10 @@ export function validateGeneratedText(
         ),
       );
       if (coreChars.size > 0 && ![...coreChars].some((ch) => text.includes(ch))) return "mode";
+      if (HOW_QUESTION_RE.test(topic) && !ACTIONABLE_ANSWER_RE.test(text)) return "mode";
       // Question-type structure markers (为什么→因为, 怎么→先, 能不能→能) are
-      // scoring rewards, not hard gates — a direct answer that skips the marker
-      // is still a valid answer, and hard-rejecting it forces the fallback.
+      // otherwise scoring rewards. Method questions are the exception: an
+      // explanation without any actionable opening does not answer「怎么办」.
     } else {
       // 自由: input is inspiration — no fidelity or answer-structure contract.
       // Only a loose relevance anchor (≥1 meaningful topic char) and the

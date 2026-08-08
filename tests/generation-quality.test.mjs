@@ -520,6 +520,14 @@ test("answer mode does not invent certainty for contextless truth questions", ()
   assert.equal(validateGeneratedText(honest, topic, "正常", "正常", "回答"), null);
 });
 
+test("method questions require an actionable answer instead of an explanation", () => {
+  const topic = "如何停止刷短视频";
+  const explanation = "刷短视频停不下来，是因为手指比脑子先下班。";
+  const action = "先把短视频关掉，让手指下班后找不到原来的工位。";
+  assert.equal(validateGeneratedText(explanation, topic, "正常", "正常", "回答"), "mode");
+  assert.equal(validateGeneratedText(action, topic, "正常", "正常", "回答"), null);
+});
+
 test("scoring penalizes bureaucratic and numeric filler", () => {
   const topic = "为什么周一来得快";
   const clean = "因为周末还在赖床，周一只好提前到门口替它按响闹钟。";
