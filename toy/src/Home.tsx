@@ -3,16 +3,31 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   HISTORY_LIMIT,
-  HISTORY_STORAGE_KEY,
-  parseHistory,
+  mergeHistory,
   prependHistory,
-  serializeHistory,
   type GenerationHistoryItem,
 } from "./history";
+import { loadCloudHistory, persistCloudHistory } from "./cloud-history";
+import {
+  LEADERBOARD_PERIODS,
+  fetchLeaderboard,
+  submitLeaderboardScore,
+  type LeaderboardPeriod,
+  type LeaderboardSnapshot,
+} from "./leaderboard";
+import {
+  fetchSentenceBoard,
+  rateSentence,
+  submitSentence,
+  type SentenceRow,
+} from "./sentences";
+import { fetchUserProfile, type ToyUserProfile } from "./profile";
+import { CHANGELOG } from "./changelog";
 import { generateStandaloneText } from "./toy-local-generator";
+import { MAX_TOPIC_LENGTH } from "../../shared/generate/validation.ts";
 
 /* ── Constants ─────────────────────────────────── */
-const MODES = ["翻译", "回答"] as const;
+const MODES = ["翻译", "回答", "自由"] as const;
 const LENGTH_OPTIONS = ["精辟", "中等", "正常"] as const;
 const THEME_OPTIONS = [
   { value: "auto", label: "自动" },
@@ -22,13 +37,15 @@ const THEME_OPTIONS = [
 const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
   翻译: ["正在拆解原话", "正在替换正常逻辑", "正在校对生成结果", "译文有点烫，正在吹凉"],
   回答: ["正在理解问题", "正在建立不必要的联系", "正在强行得出答案", "答案有点烫，正在吹凉"],
+  自由: ["正在收集灵感", "正在放飞联想", "正在整理荒诞", "灵感有点烫，正在吹凉"],
 };
-const MAX_CHARS = 30;
+const MAX_CHARS = MAX_TOPIC_LENGTH;
+const LEADERBOARD_SUBMIT_INTERVAL_MS = 10_000;
 
 const CANVAS_SERIF =
   "'Noto Serif SC','Source Han Serif SC','Songti SC','STSong','SimSun',serif";
-const CANVAS_SANS =
-  "-apple-system,BlinkMacSystemFont,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif";
+// 保存图片同样统一衬线字形
+const CANVAS_SANS = CANVAS_SERIF;
 
 type UsageStats = { generations: number };
 const TOY_STATS_STORAGE_KEY = "blahblah:toy-generation-count:v1";
@@ -90,6 +107,7 @@ export default function Home() {
   const [mode, setMode] = useState<(typeof MODES)[number]>("翻译");
   const [generationLength, setGenerationLength] = useState<(typeof LENGTH_OPTIONS)[number]>("正常");
   const [result, setResult] = useState("");
+  const [mechanism, setMechanism] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "thinking" | "success" | "error">("idle");
   const [thinkingStep, setThinkingStep] = useState(0);
   const [message, setMessage] = useState("");
@@ -97,55 +115,109 @@ export default function Home() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   const [animKey, setAnimKey] = useState(0);
   const [theme, setTheme] = useState<"auto" | "light" | "dark">("auto");
+  const [activeTab, setActiveTab] = useState<"home" | "rank" | "mine">("home");
+  /** Drilled-down sub-page within the 我的 tab (hides the bottom nav). */
+  const [subPage, setSubPage] = useState<"none" | "history">("none");
+  /** Whether the composer's mode/length options are expanded. */
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  /** Which side the mode label slides in from after a swipe/arrow change. */
+  const [modeEnterFrom, setModeEnterFrom] = useState<"left" | "right" | null>(null);
+  /** Whether the 游戏说明 modal is open. */
+  const [helpOpen, setHelpOpen] = useState(false);
+  /** Whether the 更新日志 modal is open. */
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
   const [stats, setStats] = useState<UsageStats | null>(null);
+  const [profile, setProfile] = useState<ToyUserProfile | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardSnapshot | null>(null);
+  const [leaderboardState, setLeaderboardState] = useState<
+    "idle" | "loading" | "ready" | "failed" | "unsupported"
+  >("idle");
+  const [boardType, setBoardType] = useState<"count" | "quality">("count");
+  const [period, setPeriod] = useState<LeaderboardPeriod>("week");
+  const [sentenceBoard, setSentenceBoard] = useState<SentenceRow[] | null>(null);
+  const [sentenceBoardState, setSentenceBoardState] = useState<
+    "idle" | "loading" | "ready" | "failed"
+  >("idle");
+  const [submitState, setSubmitState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [ratedIds, setRatedIds] = useState<Set<string>>(new Set());
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const modeLabelRef = useRef<HTMLSpanElement>(null);
+  /** Horizontal swipe tracking on the mode label: start point, delta, and
+   * whether a swipe (not a tap) actually happened — a swipe must not also
+   * trigger the click that expands the length options. */
+  const swipeStartXRef = useRef<number | null>(null);
+  const swipeStartYRef = useRef<number | null>(null);
+  const swipeDeltaRef = useRef(0);
+  const swipedRef = useRef(false);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
+  const helpCloseRef = useRef<HTMLButtonElement>(null);
+  const changelogButtonRef = useRef<HTMLButtonElement>(null);
+  const changelogCloseRef = useRef<HTMLButtonElement>(null);
+  /** Whether each dialog has been opened at least once, so closing it returns
+   * focus to its button without stealing focus on first mount. */
+  const helpWasOpenRef = useRef(false);
+  const changelogWasOpenRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const settingsButtonRef = useRef<HTMLButtonElement>(null);
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
-  const historyButtonRef = useRef<HTMLButtonElement>(null);
-  const historyPanelRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const submitTimerRef = useRef<number | null>(null);
+  /** How many `h-N` slots the cloud currently holds, so shrinking history can
+   * trim the orphaned keys. */
+  const cloudHistorySlotsRef = useRef(0);
+  /** Serializes cloud writes so overlapping history changes can't interleave a
+   * stale snapshot over a newer one. */
+  const cloudPersistQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  /** Coarse throttle for the count-board report. */
+  const lastLeaderboardSubmitRef = useRef(0);
+  /** Lets a stale refresh know it has been superseded. */
+  const leaderboardSeqRef = useRef(0);
+  /** Lets a stale quality-board refresh know it has been superseded. */
+  const sentenceBoardSeqRef = useRef(0);
   useEffect(() => {
     const timer = window.setTimeout(() => setStats({ generations: readGenerationCount() }), 0);
     return () => window.clearTimeout(timer);
   }, []);
 
-  /* Browser-only generation history. It never reaches the Worker or stats API. */
+  /* Best-effort login detection: reuses an existing profile consent without a
+     gesture; the first-time consent dialog is requested when 我的 opens. */
   useEffect(() => {
-    const loadTimer = window.setTimeout(() => {
-      let stored = "";
-      try {
-        stored = window.localStorage.getItem(HISTORY_STORAGE_KEY) ?? "";
-      } catch {
-        stored = "";
-      }
-      setHistory(parseHistory(stored));
-      setHistoryReady(true);
-    }, 0);
+    void fetchUserProfile().then(setProfile);
+  }, []);
 
-    const syncFromAnotherTab = (event: StorageEvent) => {
-      if (event.key === HISTORY_STORAGE_KEY) setHistory(parseHistory(event.newValue));
-    };
-    window.addEventListener("storage", syncFromAnotherTab);
+  /* Generation history is login-only cloud sync (no localStorage fallback):
+     guests simply have no history. History text never reaches the relay or
+     stats API. */
+  useEffect(() => {
+    let cancelled = false;
+    const loadTimer = window.setTimeout(() => {
+      void (async () => {
+        const cloud = await loadCloudHistory();
+        if (cancelled) return;
+        cloudHistorySlotsRef.current = cloud?.length ?? 0;
+        // Merge — never replace — so an entry generated while the cloud read
+        // was still in flight isn't dropped.
+        setHistory((current) => mergeHistory(current, cloud ?? []));
+        setHistoryReady(true);
+      })();
+    }, 0);
     return () => {
+      cancelled = true;
       window.clearTimeout(loadTimer);
-      window.removeEventListener("storage", syncFromAnotherTab);
     };
   }, []);
 
   useEffect(() => {
     if (!historyReady) return;
-    try {
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, serializeHistory(history));
-    } catch {
-      // Private browsing and full storage must not block generation.
-    }
+    // Serialize cloud writes: each queued task re-reads the slot count at run
+    // time, so overlapping history changes can't interleave a stale snapshot
+    // over a newer one.
+    cloudPersistQueueRef.current = cloudPersistQueueRef.current.then(async () => {
+      const slots = await persistCloudHistory(history, cloudHistorySlotsRef.current);
+      cloudHistorySlotsRef.current = slots;
+    });
   }, [history, historyReady]);
 
   /* thinking animation — monotonic three-act narration, no wrap-around */
@@ -167,6 +239,7 @@ export default function Home() {
     () => () => {
       if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
     },
     [],
   );
@@ -181,46 +254,60 @@ export default function Home() {
     }
   }, [theme]);
 
+  /* ── 弹窗（游戏说明 / 更新日志）: Escape to close, lock body scroll ── */
   useEffect(() => {
-    if (!settingsOpen && !historyOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (historyOpen) {
-        setHistoryOpen(false);
-        historyButtonRef.current?.focus();
-      } else {
-        setSettingsOpen(false);
-        settingsButtonRef.current?.focus();
+    if (!helpOpen && !changelogOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setHelpOpen(false);
+        setChangelogOpen(false);
       }
     };
-    const closeOnOutsideClick = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (
-        (settingsOpen &&
-          (settingsPanelRef.current?.contains(target) ||
-            settingsButtonRef.current?.contains(target))) ||
-        (historyOpen &&
-          (historyPanelRef.current?.contains(target) ||
-            historyButtonRef.current?.contains(target)))
-      )
-        return;
-      setSettingsOpen(false);
-      setHistoryOpen(false);
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    document.addEventListener("pointerdown", closeOnOutsideClick);
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", closeOnEscape);
-      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
     };
-  }, [historyOpen, settingsOpen]);
+  }, [helpOpen, changelogOpen]);
+
+  /* Move focus into the open dialog, back to its button on close. */
+  useEffect(() => {
+    if (helpOpen) {
+      helpWasOpenRef.current = true;
+      helpCloseRef.current?.focus();
+    } else if (helpWasOpenRef.current) {
+      helpWasOpenRef.current = false;
+      helpButtonRef.current?.focus();
+    }
+    if (changelogOpen) {
+      changelogWasOpenRef.current = true;
+      changelogCloseRef.current?.focus();
+    } else if (changelogWasOpenRef.current) {
+      changelogWasOpenRef.current = false;
+      changelogButtonRef.current?.focus();
+    }
+  }, [helpOpen, changelogOpen]);
 
   /* ── Generate ────────────────────────────────── */
+  /** Auto-grow the topic textarea with content: 1 line → 1-line height, up to
+   * 4 lines, then it scrolls inside the box (CSS caps max-height). */
+  const resizeTopicInput = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "home") resizeTopicInput();
+  }, [activeTab, topic, resizeTopicInput]);
   const generate = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
       if (status === "thinking") return;
-      const clean = topic.trim();
+      const clean = topic.replace(/\s+/g, " ").trim();
 
       if (!clean) {
         setStatus("error");
@@ -247,6 +334,7 @@ export default function Home() {
       try {
         const relay = toyRelayUrl();
         let generatedText = "";
+        let generatedMechanism: string | null = null;
 
         if (relay) {
           const response = await fetch(`${relay}/generate`, {
@@ -266,8 +354,12 @@ export default function Home() {
             }
             throw new Error(payload.error ?? "toy_relay_unavailable");
           }
-          const data = (await response.json()) as { text?: string };
+          const data = (await response.json()) as { text?: string; mechanism?: string | null };
           generatedText = data.text?.trim() ?? "";
+          generatedMechanism =
+            typeof data.mechanism === "string" && data.mechanism.trim()
+              ? data.mechanism.trim()
+              : null;
         } else {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
           if (controller.signal.aborted) return;
@@ -278,6 +370,7 @@ export default function Home() {
 
         if (!generatedText) throw new Error("empty");
         setResult(generatedText);
+        setMechanism(generatedMechanism);
         setStatus("success");
         setAnimKey((k) => k + 1);
         const historyItem: GenerationHistoryItem = {
@@ -288,8 +381,17 @@ export default function Home() {
           mode,
           length: generationLength,
         };
+        if (generatedMechanism) historyItem.mechanism = generatedMechanism;
         setHistory((items) => prependHistory(items, historyItem));
-        setStats({ generations: incrementGenerationCount() });
+        const nextCount = incrementGenerationCount();
+        setStats({ generations: nextCount });
+        // Best-effort week-leaderboard report, coarsely throttled; never
+        // blocks the result shown.
+        const now = Date.now();
+        if (now - lastLeaderboardSubmitRef.current >= LEADERBOARD_SUBMIT_INTERVAL_MS) {
+          lastLeaderboardSubmitRef.current = now;
+          void submitLeaderboardScore(nextCount);
+        }
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus("error");
@@ -316,18 +418,41 @@ export default function Home() {
     [topic, mode, generationLength, status],
   );
 
+  /* ── Mode switching (swipe / arrow keys) ─────── */
+  const changeMode = useCallback((nextMode: (typeof MODES)[number]) => {
+    setMode(nextMode);
+    setResult("");
+    setMechanism(null);
+    setStatus("idle");
+    setMessage("");
+    setSettingsOpen(false);
+  }, []);
+
+  /** Cycle the mode by one step. `direction` 1 = next (翻译→回答→自由),
+   * -1 = previous. The label slides in from the side the motion came from. */
+  const cycleMode = useCallback(
+    (direction: 1 | -1) => {
+      const index = MODES.indexOf(mode);
+      const next = MODES[(index + direction + MODES.length) % MODES.length];
+      setModeEnterFrom(direction === 1 ? "right" : "left");
+      changeMode(next);
+    },
+    [mode, changeMode],
+  );
+
   const restoreHistory = useCallback((item: GenerationHistoryItem) => {
     abortRef.current?.abort();
     setTopic(item.topic);
     setMode(item.mode);
     setGenerationLength(item.length);
     setResult(item.text);
+    setMechanism(item.mechanism ?? null);
     setStatus("success");
     setMessage("");
     setCopyState("idle");
     setAnimKey((key) => key + 1);
-    setHistoryOpen(false);
-    historyButtonRef.current?.focus();
+    setSubPage("none");
+    setActiveTab("home");
   }, []);
 
   const removeHistoryItem = useCallback((id: string) => {
@@ -338,6 +463,78 @@ export default function Home() {
     if (!window.confirm("确定清空全部历史记录吗？")) return;
     setHistory([]);
   }, []);
+
+  /* ── Leaderboard — week board of "共生成" counts via the Toy SDK ── */
+  const refreshLeaderboard = useCallback(async () => {
+    const seq = ++leaderboardSeqRef.current;
+    if (typeof window === "undefined" || !window.toy) {
+      if (seq !== leaderboardSeqRef.current) return;
+      setLeaderboardState("unsupported");
+      setLeaderboard(null);
+      return;
+    }
+    setLeaderboardState("loading");
+    const snapshot = await fetchLeaderboard(period);
+    if (seq !== leaderboardSeqRef.current) return; // superseded by a newer refresh
+    if (!snapshot) {
+      setLeaderboardState("failed");
+      setLeaderboard(null);
+      return;
+    }
+    setLeaderboard(snapshot);
+    setLeaderboardState("ready");
+  }, [period]);
+
+  const refreshSentenceBoard = useCallback(async () => {
+    const seq = ++sentenceBoardSeqRef.current;
+    setSentenceBoardState("loading");
+    const rows = await fetchSentenceBoard(period, toyRelayUrl());
+    if (seq !== sentenceBoardSeqRef.current) return; // superseded
+    if (!rows) {
+      setSentenceBoardState("failed");
+      setSentenceBoard(null);
+      return;
+    }
+    setSentenceBoard(rows);
+    setSentenceBoardState("ready");
+  }, [period]);
+
+  /* Fetch the active board when the 排行 tab opens or its board/period
+     changes. Deps deliberately exclude the board state — including it would
+     re-trigger this effect on every state change and loop. */
+  useEffect(() => {
+    if (activeTab !== "rank") return;
+    if (boardType === "count") {
+      void refreshLeaderboard();
+    } else {
+      void refreshSentenceBoard();
+    }
+  }, [activeTab, boardType, period, refreshLeaderboard, refreshSentenceBoard]);
+
+  /* 投上榜 — submit the current result to the 胡言乱语排行榜 (login only). */
+  const submitToBoard = useCallback(async () => {
+    const relay = toyRelayUrl();
+    if (!relay || !profile || !result || submitState === "sending") return;
+    setSubmitState("sending");
+    const ok = await submitSentence(result, profile, relay);
+    setSubmitState(ok ? "sent" : "failed");
+    if (ok && activeTab === "rank" && boardType === "quality") void refreshSentenceBoard();
+    if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
+    submitTimerRef.current = window.setTimeout(() => setSubmitState("idle"), 2400);
+  }, [profile, result, submitState, activeTab, boardType, refreshSentenceBoard]);
+
+  const handleRate = useCallback(
+    async (id: string, rating: number) => {
+      const relay = toyRelayUrl();
+      if (!relay || !profile) return;
+      const ok = await rateSentence(id, rating, relay);
+      if (ok) {
+        setRatedIds((set) => new Set(set).add(id));
+        void refreshSentenceBoard();
+      }
+    },
+    [profile, refreshSentenceBoard],
+  );
 
   /* ── Copy — clipboard API with execCommand fallback ── */
   const copyResult = useCallback(async () => {
@@ -366,7 +563,6 @@ export default function Home() {
     copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
   }, [result]);
 
-  /* ── Save Image — theme-aware card with attribution footer ── */
   const saveImage = useCallback(async () => {
     if (!result || saveState === "saving") return;
     setSaveState("saving");
@@ -454,295 +650,98 @@ export default function Home() {
 
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
-  const canGenerate = status !== "thinking";
   const hasResult = result !== "";
 
   /* ── Render ──────────────────────────────────── */
   return (
     <div className="app-shell">
       <div className="page-frame">
-        {/* ── Header ───────────────────────────── */}
-        <header className="site-header">
-          <div className="site-title">
-            <h1>胡言乱语生成器</h1>
-          </div>
-          <button
-            ref={historyButtonRef}
-            className={`settings-toggle history-toggle${historyOpen ? " active" : ""}`}
-            type="button"
-            onClick={() => {
-              setHistoryOpen((open) => !open);
-              setSettingsOpen(false);
-            }}
-            aria-label={historyOpen ? "关闭历史记录" : "打开历史记录"}
-            aria-expanded={historyOpen}
-            aria-controls="history-panel"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 7v5l3 2M5.4 5.4A9 9 0 1 1 3 12" />
-              <path d="M3 5v4h4" />
-            </svg>
-            {history.length > 0 && <span className="history-count">{history.length}</span>}
-          </button>
-          <button
-            ref={settingsButtonRef}
-            className={`settings-toggle${settingsOpen ? " active" : ""}`}
-            type="button"
-            onClick={() => {
-              setSettingsOpen((open) => !open);
-              setHistoryOpen(false);
-            }}
-            aria-label={settingsOpen ? "关闭设置" : "打开设置"}
-            aria-expanded={settingsOpen}
-            aria-controls="settings-panel"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6" />
-            </svg>
-          </button>
-
-          <div
-            ref={settingsPanelRef}
-            id="settings-panel"
-            className="settings-popover"
-            role="dialog"
-            aria-label="设置"
-            hidden={!settingsOpen}
-          >
-            <div className="settings-header">
-              <span>设置</span>
+        {/* ── Main Content ──────────────────────── */}
+        {subPage === "history" ? (
+          <section className="sub-page" aria-label="历史记录">
+            <div className="sub-page-header">
               <button
                 type="button"
-                onClick={() => {
-                  setSettingsOpen(false);
-                  settingsButtonRef.current?.focus();
-                }}
-                aria-label="关闭设置"
+                className="sub-page-back"
+                onClick={() => setSubPage("none")}
+                aria-label="返回"
               >
-                ×
+                ← 返回
               </button>
-            </div>
-
-            <div className="settings-content">
-              <fieldset className="setting-block theme-block">
-                <legend className="micro-label">主题设置</legend>
-                <div className="theme-options" role="radiogroup" aria-label="主题设置">
-                  {THEME_OPTIONS.map((option, index) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      role="radio"
-                      className={`theme-option${theme === option.value ? " active" : ""}`}
-                      aria-checked={theme === option.value}
-                      tabIndex={theme === option.value ? 0 : -1}
-                      onClick={() => setTheme(option.value)}
-                      onKeyDown={(event) => {
-                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                          ? 1
-                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                            ? -1
-                            : 0;
-                        if (!direction) return;
-                        event.preventDefault();
-                        const nextIndex = (index + direction + THEME_OPTIONS.length) % THEME_OPTIONS.length;
-                        setTheme(THEME_OPTIONS[nextIndex].value);
-                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".theme-option");
-                        options?.[nextIndex]?.focus();
-                      }}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-            </div>
-          </div>
-
-          <div
-            ref={historyPanelRef}
-            id="history-panel"
-            className="settings-popover history-popover"
-            role="dialog"
-            aria-label="历史记录"
-            hidden={!historyOpen}
-          >
-            <div className="settings-header">
-              <span>历史记录</span>
-              <div className="history-header-actions">
+              <h2 className="sub-page-title">历史记录</h2>
+              <div className="sub-page-actions">
                 <span className="history-count-label">{history.length}/{HISTORY_LIMIT}</span>
                 {history.length > 0 && (
                   <button type="button" onClick={clearHistory}>清空</button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHistoryOpen(false);
-                    historyButtonRef.current?.focus();
-                  }}
-                  aria-label="关闭历史记录"
-                >
-                  ×
-                </button>
               </div>
             </div>
-            <div className="history-content">
-              {history.length === 0 ? (
-                <p className="history-empty">还没有生成记录</p>
-              ) : (
-                <div className="history-list" role="list" aria-label="生成历史">
-                  {history.map((item) => (
-                    <div className="history-item" role="listitem" key={item.id}>
-                      <button
-                        type="button"
-                        className="history-item-main"
-                        onClick={() => restoreHistory(item)}
-                        aria-label={`恢复 ${item.text}`}
-                      >
-                        <span className="history-item-meta">
-                          <span>{item.mode} · {item.length}</span>
-                          <time dateTime={new Date(item.createdAt).toISOString()}>
-                            {formatHistoryTime(item.createdAt)}
-                          </time>
-                        </span>
-                        <span className="history-item-result">{item.text}</span>
-                        <span className="history-item-topic">{item.topic}</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="history-item-delete"
-                        onClick={() => removeHistoryItem(item.id)}
-                        aria-label={`删除 ${item.text}`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* ── Main Content ──────────────────────── */}
-        <div className="main-content">
-          {/* Input */}
-          <form id="gen-form" className="generator-form" onSubmit={generate}>
-            <div className="field-block">
-              <div className="field-label-row">
-                <label htmlFor="topic" className="visually-hidden">
-                  {mode === "翻译" ? "原话" : "问题"}
-                </label>
-                <span
-                  id="char-count"
-                  role="status"
-                  className={`char-count${isOverLimit ? " over-limit" : ""}`}
-                >
-                  {topic.length}/{MAX_CHARS}
-                </span>
-              </div>
-              <input
-                ref={inputRef}
-                id="topic"
-                className="topic-input"
-                type="text"
-                value={topic}
-                maxLength={MAX_CHARS + 1}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder={mode === "翻译" ? "输入一句话" : "输入一个问题"}
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby="char-count"
-                aria-invalid={isOverLimit || undefined}
-              />
-            </div>
-          </form>
-
-          <div className="main-options">
-            <fieldset className="mode-block" disabled={status === "thinking"}>
-              <legend className="visually-hidden">生成模式</legend>
-              <div className="mode-options" role="radiogroup" aria-label="生成模式">
-                {MODES.map((value, index) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    className={`mode-option${mode === value ? " active" : ""}`}
-                    aria-checked={mode === value}
-                    tabIndex={mode === value ? 0 : -1}
-                    onClick={() => {
-                      setMode(value);
-                      setResult("");
-                      setStatus("idle");
-                      setMessage("");
-                    }}
-                    onKeyDown={(event) => {
-                      const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                        ? 1
-                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                          ? -1
-                          : 0;
-                      if (!direction) return;
-                      event.preventDefault();
-                      const nextIndex = (index + direction + MODES.length) % MODES.length;
-                      setMode(MODES[nextIndex]);
-                      setResult("");
-                      setStatus("idle");
-                      const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
-                      options?.[nextIndex]?.focus();
-                    }}
-                  >
-                    <span>{value}</span>
-                  </button>
+            {history.length === 0 ? (
+              <p className="history-empty">还没有生成记录</p>
+            ) : (
+              <div className="history-list" role="list" aria-label="生成历史">
+                {history.map((item) => (
+                  <div className="history-item" role="listitem" key={item.id}>
+                    <button
+                      type="button"
+                      className="history-item-main"
+                      onClick={() => restoreHistory(item)}
+                      aria-label={`恢复 ${item.text}`}
+                    >
+                      <span className="history-item-meta">
+                        <span>{item.mode} · {item.length}</span>
+                        <time dateTime={new Date(item.createdAt).toISOString()}>
+                          {formatHistoryTime(item.createdAt)}
+                        </time>
+                      </span>
+                      <span className="history-item-result">{item.text}</span>
+                      <span className="history-item-topic">{item.topic}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-item-delete"
+                      onClick={() => removeHistoryItem(item.id)}
+                      aria-label={`删除 ${item.text}`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 ))}
               </div>
-            </fieldset>
-
-            <fieldset className="length-block" disabled={status === "thinking"}>
-              <legend className="visually-hidden">生成长度</legend>
-              <div className="length-options" role="radiogroup" aria-label="生成长度">
-                {LENGTH_OPTIONS.map((value, index) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    className={`length-option${generationLength === value ? " active" : ""}`}
-                    aria-checked={generationLength === value}
-                    tabIndex={generationLength === value ? 0 : -1}
-                    onClick={() => setGenerationLength(value)}
-                    onKeyDown={(event) => {
-                      const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-                        ? 1
-                        : event.key === "ArrowLeft" || event.key === "ArrowUp"
-                          ? -1
-                          : 0;
-                      if (!direction) return;
-                      event.preventDefault();
-                      const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
-                      setGenerationLength(LENGTH_OPTIONS[nextIndex]);
-                      const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
-                      options?.[nextIndex]?.focus();
-                    }}
-                  >
-                    {value}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
+            )}
+          </section>
+        ) : (
+        <div className={`main-content tab-${activeTab}`}>
+          {activeTab === "home" && (
+            <>
+          {/* ── 游戏说明 / 更新日志 (top corners) ─────── */}
+          <div className="home-topbar">
+            <button
+              ref={helpButtonRef}
+              type="button"
+              className="help-button"
+              onClick={() => setHelpOpen(true)}
+            >
+              <svg className="help-button-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z" />
+                <path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.8" />
+                <path d="M12 17h.01" />
+              </svg>
+              游戏说明
+            </button>
+            <button
+              ref={changelogButtonRef}
+              type="button"
+              className="help-button"
+              onClick={() => setChangelogOpen(true)}
+            >
+              <svg className="help-button-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 8v4l3 2M5.4 5.4A9 9 0 1 1 3 12" />
+                <path d="M3 5v4h4" />
+              </svg>
+              更新日志
+            </button>
           </div>
-
-          {/* Primary button — lives outside the form, submits via form attr */}
-          <button
-            className="primary-button"
-            type="submit"
-            form="gen-form"
-            aria-disabled={!canGenerate || undefined}
-            aria-label={status === "thinking" ? `正在${mode}……` : `开始${mode}`}
-          >
-            <span>{status === "thinking" ? `正在${mode}……` : `开始${mode}`}</span>
-            <span className="btn-hint" aria-hidden="true">
-              {status === "thinking" ? "" : "↵"}
-            </span>
-          </button>
 
           {/* ── Result ──────────────────────────── */}
           <section className="result-section" aria-live="polite">
@@ -831,15 +830,613 @@ export default function Home() {
                           : "保存图片"}
                   </button>
                 </div>
+                {profile && toyRelayUrl() && (
+                  <div className="board-submit-row">
+                    <button
+                      type="button"
+                      className="board-submit-button"
+                      disabled={status === "thinking" || submitState === "sending"}
+                      onClick={() => void submitToBoard()}
+                    >
+                      {submitState === "sending"
+                        ? "上榜中…"
+                        : submitState === "sent"
+                          ? "已投给胡言乱语榜"
+                          : submitState === "failed"
+                            ? "上榜失败，再试一次"
+                            : "投给胡言乱语榜"}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </section>
-        </div>
 
-        <footer className="site-footer" aria-label="使用统计" aria-live="polite">
-          <span>共生成 {stats ? formatStat(stats.generations) : "—"} 句</span>
-        </footer>
+          {/* ── Composer — 单一输入区 + 下方「生成」按钮 ── */}
+          <div className="composer-block">
+          <form id="gen-form" className="composer" onSubmit={generate}>
+            <button
+              type="button"
+              className="composer-settings"
+              onClick={() => {
+                // A swipe must not also expand the length options.
+                if (swipedRef.current) {
+                  swipedRef.current = false;
+                  return;
+                }
+                setSettingsOpen((open) => !open);
+              }}
+              onPointerDown={(event) => {
+                swipeStartXRef.current = event.clientX;
+                swipeStartYRef.current = event.clientY;
+                swipeDeltaRef.current = 0;
+                swipedRef.current = false;
+                event.currentTarget.setPointerCapture?.(event.pointerId);
+              }}
+              onPointerMove={(event) => {
+                if (swipeStartXRef.current === null) return;
+                const dx = event.clientX - swipeStartXRef.current;
+                const dy = event.clientY - (swipeStartYRef.current ?? 0);
+                // Only claim horizontal drags; leave vertical scroll alone.
+                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+                  swipedRef.current = true;
+                  swipeDeltaRef.current = dx;
+                  if (modeLabelRef.current) {
+                    modeLabelRef.current.style.transform = `translateX(${dx * 0.35}px)`;
+                  }
+                }
+              }}
+              onPointerUp={() => {
+                const dx = swipeDeltaRef.current;
+                if (modeLabelRef.current) modeLabelRef.current.style.transform = "";
+                swipeStartXRef.current = null;
+                swipeStartYRef.current = null;
+                swipeDeltaRef.current = 0;
+                if (Math.abs(dx) > 30) cycleMode(dx < 0 ? 1 : -1);
+                // The click fires right after pointerup; keep swipedRef true for
+                // it so a drag doesn't also expand the options, then clear it
+                // so the next tap works even if the browser suppressed the click.
+                window.setTimeout(() => {
+                  swipedRef.current = false;
+                }, 0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowRight") {
+                  event.preventDefault();
+                  cycleMode(1);
+                } else if (event.key === "ArrowLeft") {
+                  event.preventDefault();
+                  cycleMode(-1);
+                }
+              }}
+              aria-expanded={settingsOpen}
+              aria-controls="composer-options"
+              aria-label={`模式 ${mode}，左右滑动或方向键切换`}
+            >
+              <span
+                ref={modeLabelRef}
+                key={mode}
+                className={`composer-settings-label${modeEnterFrom ? ` enter-${modeEnterFrom}` : ""}`}
+                onAnimationEnd={() => setModeEnterFrom(null)}
+              >
+                {mode} · {generationLength}
+              </span>
+            </button>
+
+            <div
+              id="composer-options"
+              className={`composer-options${settingsOpen ? " open" : ""}`}
+            >
+              <fieldset className="mode-block composer-segment" disabled={status === "thinking"}>
+                <legend className="visually-hidden">生成模式</legend>
+                <div className="mode-options" role="radiogroup" aria-label="生成模式">
+                  {MODES.map((value, index) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      className={`mode-option${mode === value ? " active" : ""}`}
+                      aria-checked={mode === value}
+                      tabIndex={mode === value ? 0 : -1}
+                      onClick={() => changeMode(value)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + MODES.length) % MODES.length;
+                        changeMode(MODES[nextIndex]);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".mode-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      <span>{value}</span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="length-block composer-segment" disabled={status === "thinking"}>
+                <legend className="visually-hidden">生成长度</legend>
+                <div className="length-options" role="radiogroup" aria-label="生成长度">
+                  {LENGTH_OPTIONS.map((value, index) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      className={`length-option${generationLength === value ? " active" : ""}`}
+                      aria-checked={generationLength === value}
+                      tabIndex={generationLength === value ? 0 : -1}
+                      onClick={() => setGenerationLength(value)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + LENGTH_OPTIONS.length) % LENGTH_OPTIONS.length;
+                        setGenerationLength(LENGTH_OPTIONS[nextIndex]);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".length-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+
+            <div className="composer-input-row">
+              <textarea
+                ref={inputRef}
+                id="topic"
+                className="topic-input"
+                rows={1}
+                value={topic}
+                maxLength={MAX_CHARS + 1}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder={
+                  mode === "翻译"
+                    ? "输入一句话"
+                    : mode === "回答"
+                      ? "输入一个问题"
+                      : "输入一个灵感"
+                }
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby="char-count"
+                aria-invalid={isOverLimit || undefined}
+                onKeyDown={(event) => {
+                  // 回车提交，Shift+回车换行
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void generate();
+                  }
+                }}
+              />
+            </div>
+
+            <div className="composer-footer">
+              <span
+                id="char-count"
+                role="status"
+                className={`char-count${isOverLimit ? " over-limit" : ""}`}
+              >
+                {topic.length}/{MAX_CHARS}
+              </span>
+            </div>
+          </form>
+
+            <button
+              className="primary-button"
+              type="submit"
+              form="gen-form"
+              aria-disabled={status === "thinking" || undefined}
+              aria-label={status === "thinking" ? `正在${mode}……` : `开始${mode}`}
+            >
+              <span>{status === "thinking" ? `正在${mode}……` : `开始${mode}`}</span>
+            </button>
+          </div>
+            </>
+          )}
+
+          {activeTab === "rank" && (
+            <section className="tab-page" aria-label="排行">
+              <div className="board-switch" role="radiogroup" aria-label="排行榜类型">
+                <button
+                  type="button"
+                  role="radio"
+                  className={`board-option${boardType === "count" ? " active" : ""}`}
+                  aria-checked={boardType === "count"}
+                  onClick={() => setBoardType("count")}
+                >
+                  生成数量
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  className={`board-option${boardType === "quality" ? " active" : ""}`}
+                  aria-checked={boardType === "quality"}
+                  onClick={() => setBoardType("quality")}
+                >
+                  胡言乱语
+                </button>
+              </div>
+
+              <div className="period-switch" role="radiogroup" aria-label="统计周期">
+                {LEADERBOARD_PERIODS.map((entry) => (
+                  <button
+                    key={entry.value}
+                    type="button"
+                    role="radio"
+                    className={`period-option${period === entry.value ? " active" : ""}`}
+                    aria-checked={period === entry.value}
+                    onClick={() => setPeriod(entry.value)}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
+
+              {boardType === "count" && (
+                <>
+                  {leaderboardState === "loading" && (
+                    <p className="leaderboard-empty">榜单加载中…</p>
+                  )}
+                  {leaderboardState === "failed" && (
+                    <p className="leaderboard-empty">榜单暂时不可用，请稍后再试。</p>
+                  )}
+                  {leaderboardState === "unsupported" && (
+                    <p className="leaderboard-empty">当前环境暂不支持生成数量榜。</p>
+                  )}
+                  {leaderboardState === "ready" && leaderboard && (
+                    <>
+                      {leaderboard.list.length === 0 ? (
+                        <p className="leaderboard-empty">这个周期还没有人上榜，来做第一个。</p>
+                      ) : (
+                        <ol className="leaderboard-list">
+                          {leaderboard.list.map((row) => (
+                            <li key={row.rank} className="leaderboard-row">
+                              <span
+                                className={`leaderboard-rank${
+                                  row.rank <= 3 ? ` top-${row.rank}` : ""
+                                }`}
+                              >
+                                {row.rank}
+                              </span>
+                              <img
+                                className="leaderboard-avatar"
+                                src={row.avatar}
+                                alt=""
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                              />
+                              <span className="leaderboard-name">{row.nickname}</span>
+                              <span className="leaderboard-score">{formatStat(row.score)} 句</span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                      <p className="leaderboard-mine" role="status">
+                        {!profile
+                          ? "登录后可参与生成数量榜。"
+                          : leaderboard.mine?.ranked
+                            ? `我的排名：#${leaderboard.mine.rank} · ${formatStat(leaderboard.mine.score)} 句`
+                            : "我还没上榜，多生成几句试试。"}
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+
+              {boardType === "quality" && (
+                <>
+                  {sentenceBoardState === "loading" && (
+                    <p className="leaderboard-empty">榜单加载中…</p>
+                  )}
+                  {sentenceBoardState === "failed" && (
+                    <p className="leaderboard-empty">榜单暂时不可用，请稍后再试。</p>
+                  )}
+                  {sentenceBoardState === "ready" && sentenceBoard && (
+                    sentenceBoard.length === 0 ? (
+                      <p className="leaderboard-empty">这个周期还没有句子上榜，去生成一句吧。</p>
+                    ) : (
+                      <ol className="sentence-board-list">
+                        {sentenceBoard.map((row, index) => (
+                          <li key={row.id} className="sentence-board-item">
+                            <span className="sentence-board-rank">{index + 1}</span>
+                            <div className="sentence-board-body">
+                              <p className="sentence-board-text">{row.text}</p>
+                              <div className="sentence-board-meta">
+                                <span className="sentence-board-author">{row.nickname}</span>
+                                <span className="sentence-board-rating">
+                                  {row.rating.toFixed(1)} 分 · {row.votes} 票
+                                </span>
+                              </div>
+                              {profile && !ratedIds.has(row.id) && (
+                                <div
+                                  className="sentence-board-rate"
+                                  role="group"
+                                  aria-label={`给「${row.text}」评分`}
+                                >
+                                  {[1, 2, 3, 4, 5].map((score) => (
+                                    <button
+                                      key={score}
+                                      type="button"
+                                      onClick={() => void handleRate(row.id, score)}
+                                    >
+                                      {score}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    )
+                  )}
+                </>
+              )}
+            </section>
+          )}
+
+          {activeTab === "mine" && (
+            <section className="tab-page" aria-label="我的">
+              <div className="profile-card">
+                {profile ? (
+                  <img
+                    className="profile-avatar"
+                    src={profile.avatar}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <span className="profile-avatar profile-avatar-empty" aria-hidden="true" />
+                )}
+                <div className="profile-meta">
+                  <span className="profile-name">{profile ? profile.nickname : "未登录"}</span>
+                  <span className="profile-count">
+                    共生成 {stats ? formatStat(stats.generations) : "—"} 句
+                  </span>
+                  <span className="profile-note">
+                    {profile ? "已登录" : "登录后可参与排行榜和同步历史记录"}
+                  </span>
+                </div>
+                {!profile && (
+                  <button
+                    type="button"
+                    className="profile-login-button"
+                    onClick={() => void fetchUserProfile().then(setProfile)}
+                  >
+                    登录
+                  </button>
+                )}
+              </div>
+
+              <div className="mine-entries">
+                <button
+                  type="button"
+                  className="mine-entry"
+                  onClick={() => setSubPage("history")}
+                  aria-label="打开历史记录"
+                >
+                  <span className="mine-entry-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 7v5l3 2M5.4 5.4A9 9 0 1 1 3 12" />
+                      <path d="M3 5v4h4" />
+                    </svg>
+                  </span>
+                  <span className="mine-entry-label">历史记录</span>
+                  <span className="mine-entry-value">
+                    {!profile
+                      ? "登录后可见"
+                      : history.length
+                        ? `${history.length}/${HISTORY_LIMIT}`
+                        : "暂无"}
+                  </span>
+                  <span className="mine-entry-chevron" aria-hidden="true">›</span>
+                </button>
+              </div>
+
+              <fieldset className="setting-block theme-block">
+                <legend className="micro-label">主题设置</legend>
+                <div className="theme-options" role="radiogroup" aria-label="主题设置">
+                  {THEME_OPTIONS.map((option, index) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      className={`theme-option${theme === option.value ? " active" : ""}`}
+                      aria-checked={theme === option.value}
+                      tabIndex={theme === option.value ? 0 : -1}
+                      onClick={() => setTheme(option.value)}
+                      onKeyDown={(event) => {
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+                          ? 1
+                          : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                            ? -1
+                            : 0;
+                        if (!direction) return;
+                        event.preventDefault();
+                        const nextIndex = (index + direction + THEME_OPTIONS.length) % THEME_OPTIONS.length;
+                        setTheme(THEME_OPTIONS[nextIndex].value);
+                        const options = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(".theme-option");
+                        options?.[nextIndex]?.focus();
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            </section>
+          )}
+        </div>
+        )}
       </div>
+
+      {subPage === "none" && (
+      <nav className="tab-bar" aria-label="页面导航">
+          <button
+            type="button"
+            className={`tab-item${activeTab === "home" ? " active" : ""}`}
+            onClick={() => setActiveTab("home")}
+            aria-current={activeTab === "home" ? "page" : undefined}
+          >
+            <svg className="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.2 12 3l9 8.2M5.4 9.7V21h13.2V9.7" />
+            </svg>
+            <span>主页</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-item${activeTab === "rank" ? " active" : ""}`}
+            onClick={() => setActiveTab("rank")}
+            aria-current={activeTab === "rank" ? "page" : undefined}
+          >
+            <svg className="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z" />
+              <path d="M7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3" />
+            </svg>
+            <span>排行</span>
+          </button>
+          <button
+            type="button"
+            className={`tab-item${activeTab === "mine" ? " active" : ""}`}
+            onClick={() => {
+              setActiveTab("mine");
+              // Gesture context — lets the platform show the first-time
+              // profile consent dialog if it hasn't been granted yet.
+              void fetchUserProfile().then(setProfile);
+            }}
+            aria-current={activeTab === "mine" ? "page" : undefined}
+          >
+            <svg className="tab-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5c.8-3.6 3.9-5.5 7.5-5.5s6.7 1.9 7.5 5.5" />
+            </svg>
+            <span>我的</span>
+          </button>
+      </nav>
+      )}
+
+      {/* ── 游戏说明 modal ──────────────────────── */}
+      {helpOpen && (
+        <div className="help-overlay" onClick={() => setHelpOpen(false)}>
+          <div
+            className="help-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="游戏说明"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="help-header">
+              <h2 className="help-title">游戏说明</h2>
+              <button
+                ref={helpCloseRef}
+                type="button"
+                className="help-close"
+                onClick={() => setHelpOpen(false)}
+                aria-label="关闭游戏说明"
+              >
+                ×
+              </button>
+            </div>
+            <div className="help-body">
+              <section className="help-section">
+                <h3>怎么玩</h3>
+                <ol>
+                  <li>在输入框写一句话、一个问题或一个灵感。</li>
+                  <li>点输入框上方的「翻译 · 正常」按钮，切换模式和长度。</li>
+                  <li>点「开始生成」，得到一句胡言乱语。</li>
+                  <li>生成后可以复制、保存成图片，或投给胡言乱语榜。</li>
+                </ol>
+              </section>
+              <section className="help-section">
+                <h3>模式</h3>
+                <dl>
+                  <dt>翻译</dt>
+                  <dd>把原话改写成胡话，事实和态度不变，读者能猜回原话。</dd>
+                  <dt>回答</dt>
+                  <dd>直接回答你的问题，答案一本正经地荒谬。</dd>
+                  <dt>自由</dt>
+                  <dd>把输入当灵感自由发挥，只求一句和输入有关的荒诞话。</dd>
+                </dl>
+              </section>
+              <section className="help-section">
+                <h3>长度</h3>
+                <dl>
+                  <dt>精辟</dt>
+                  <dd>4–8 个字左右，一句话直接落点。</dd>
+                  <dt>中等</dt>
+                  <dd>12–24 个字左右，一个事实加一次转折。</dd>
+                  <dt>正常</dt>
+                  <dd>25–48 个字左右，一次铺垫、一次转折、立即收尾。</dd>
+                </dl>
+              </section>
+              <section className="help-section">
+                <h3>排行榜</h3>
+                <dl>
+                  <dt>生成数量榜</dt>
+                  <dd>按生成句数排名，分 24 小时 / 7 天 / 30 天。</dd>
+                  <dt>胡言乱语榜</dt>
+                  <dd>把句子投上去，让大家打 1–5 分，同样分三个周期。</dd>
+                </dl>
+              </section>
+              <section className="help-section">
+                <h3>登录</h3>
+                <p>登录后可以参与排行榜、把句子投上榜，历史记录也会同步到云端。</p>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── 更新日志 modal ──────────────────────── */}
+      {changelogOpen && (
+        <div className="help-overlay" onClick={() => setChangelogOpen(false)}>
+          <div
+            className="help-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="更新日志"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="help-header">
+              <h2 className="help-title">更新日志</h2>
+              <button
+                ref={changelogCloseRef}
+                type="button"
+                className="help-close"
+                onClick={() => setChangelogOpen(false)}
+                aria-label="关闭更新日志"
+              >
+                ×
+              </button>
+            </div>
+            <div className="help-body changelog-body">
+              {CHANGELOG.map((entry) => (
+                <section className="changelog-entry" key={entry.version}>
+                  <h3 className="changelog-version">
+                    {entry.version}
+                    <time dateTime={entry.date}>{entry.date}</time>
+                  </h3>
+                  <ul className="changelog-list">
+                    {entry.items.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

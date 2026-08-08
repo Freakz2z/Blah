@@ -22,7 +22,8 @@
     "toy/**/*.ts",
     "toy/**/*.tsx",
     "shared/**/*.ts",
-    "toy-relay/**/*.ts"
+    "toy-relay/**/*.ts",
+    "types/**/*.d.ts"
   ],
   "exclude": ["node_modules"]
 }

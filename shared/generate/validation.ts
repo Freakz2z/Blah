@@ -1,9 +1,11 @@
 /** Shared request validation for the Toy relay. It runs before rate limiting
  * and stays free of server-only imports so the browser fallback can reuse it. */
 
-export const MAX_TOPIC_LENGTH = 30;
+/** Loose but abuse-bounded: real sentences/questions rarely exceed 100
+ * codepoints; anything longer is almost certainly scripted input. */
+export const MAX_TOPIC_LENGTH = 100;
 
-export const GENERATION_MODES = ["翻译", "回答"] as const;
+export const GENERATION_MODES = ["翻译", "回答", "自由"] as const;
 export type GenerationMode = (typeof GENERATION_MODES)[number];
 
 export const GENERATION_LENGTHS = ["精辟", "中等", "正常"] as const;

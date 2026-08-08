@@ -3,9 +3,7 @@ import test from "node:test";
 
 import {
   HISTORY_LIMIT,
-  parseHistory,
   prependHistory,
-  serializeHistory,
 } from "../toy/src/history.ts";
 
 const item = (id) => ({
@@ -17,16 +15,13 @@ const item = (id) => ({
   length: "正常",
 });
 
-test("history parser ignores malformed browser data", () => {
-  assert.deepEqual(parseHistory("not-json"), []);
-  assert.deepEqual(parseHistory(JSON.stringify([item("ok"), { id: "bad" }])), [item("ok")]);
-});
-
-test("history serialization and prepend keep newest 20 records", () => {
+test("prependHistory keeps the newest 20 records and dedups by id", () => {
   const records = Array.from({ length: HISTORY_LIMIT }, (_, index) => item(String(index)));
   const next = prependHistory(records, item("new"));
   assert.equal(next.length, HISTORY_LIMIT);
   assert.equal(next[0].id, "new");
   assert.equal(next.at(-1).id, String(HISTORY_LIMIT - 2));
-  assert.deepEqual(parseHistory(serializeHistory(next)), next);
+
+  const replaced = prependHistory(next, item("new"));
+  assert.equal(replaced.filter((record) => record.id === "new").length, 1);
 });

@@ -13,11 +13,16 @@ test("Toy adapter is a static standalone bundle", async () => {
 
   assert.match(html, /<div id="root"><\/div>/);
   assert.match(html, /src="\.\/main\.tsx"/);
-  assert.match(html, /__BLAHBLAH_STANDALONE_TOY__\s*=\s*true/);
   assert.match(html, /__BLAHBLAH_TOY_RELAY_URL__\s*=\s*"https:\/\/api\.freakz2z\.com"/);
   assert.doesNotMatch(html, /blah\.freakz2z\.com/);
+  assert.match(html, /toy-sdk\.js/);
   assert.match(page, /fetch\(`\$\{relay\}\/generate`/);
   assert.match(page, /generateStandaloneText\(clean, mode, generationLength\)/);
+  // Cloud history and leaderboard stay SDK-guarded — nothing breaks when
+  // toy-sdk.js is absent or the user isn't logged in.
+  assert.match(page, /loadCloudHistory/);
+  assert.match(page, /persistCloudHistory/);
+  assert.match(page, /submitLeaderboardScore/);
   assert.match(localGenerator, /fallbackForLength/);
   assert.match(config, /base:\s*["']\.\/["']/);
   assert.match(config, /dist\/toy/);

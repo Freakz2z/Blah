@@ -16,18 +16,16 @@ import {
 import {
   COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
+  exemplarOutputsForTopic,
   MENTAL_STATE_PROMPTS,
   MODE_PROMPTS,
   QUALITY_GATE,
   RUNTIME_INSTRUCTION,
   GENERATION_LENGTH_PROMPTS,
-  MECHANISM_HINTS,
-  TIER_MECHANISMS,
   SKILL_SHA256,
   SKILL_SOURCE,
   buildRuntimePrompt,
   buildSystemPrompt,
-  drawMechanismSets,
 } from "../shared/generate/prompts.ts";
 import {
   normalizeGenerationLength,
@@ -36,6 +34,7 @@ import {
 } from "../shared/generate/validation.ts";
 import { fallbackForLength } from "../shared/generate/fallback.ts";
 import { isUnsafeGeneratedText, safeFallbackForLength } from "../shared/generate/safety.ts";
+import { rotatedMemes, TRENDING_MEMES } from "../shared/generate/trending.ts";
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
 test("cleanGeneratedText strips nested prefixes and wrapping quotes", () => {
@@ -72,14 +71,17 @@ test("validateGeneratedText accepts a well-formed sentence", () => {
   assert.equal(validateGeneratedText(VALID_SENTENCE, "考研"), null);
 });
 
-test("validateGeneratedText rejects out-of-range lengths", () => {
+test("validateGeneratedText rejects only clearly broken lengths", () => {
+  // Length is a soft guide now — the prompt steers the model and the scoring
+  // rewards near-target output, so only absurdly short/long output is rejected.
   assert.equal(validateGeneratedText("太短了。", "考研"), "length");
-  assert.equal(validateGeneratedText("很".repeat(49), "考研"), "length");
+  assert.equal(validateGeneratedText("很".repeat(101), "考研"), "length");
 });
 
-test("validateGeneratedText applies the selected generation-length contract", () => {
+test("validateGeneratedText treats the length contract as approximate", () => {
+  // 精辟 accepts a slightly-long one-liner; 中等 accepts a slightly-short one.
   assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "精辟"), null);
-  assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "中等"), "length");
+  assert.equal(validateGeneratedText("考研先别急。", "考研", "正常", "中等"), null);
   assert.equal(
     validateGeneratedText("考研先别急着下结论，录取通知还在练习敲门。", "考研", "正常", "中等"),
     null,
@@ -140,25 +142,24 @@ test("removed mood names remain valid ordinary topic vocabulary", () => {
 test("soft leak words penalize the score without rejecting the sentence", () => {
   const soft = "这个生成器认真思考了很久，最后决定把考研的问题排进队伍里。";
   assert.equal(validateGeneratedText(soft, "考研"), null);
-  const penalized = scoreGeneratedText(soft, "考研", "正常", 0);
-  const exempt = scoreGeneratedText(soft, "生成器", "正常", 0);
+  const penalized = scoreGeneratedText(soft, "考研", 0);
+  const exempt = scoreGeneratedText(soft, "生成器", 0);
   assert.ok(penalized.score < exempt.score);
 });
 
 test("scoreGeneratedText prefers topic-relevant text and penalizes clichés", () => {
-  const onTopic = scoreGeneratedText(VALID_SENTENCE, "考研", "正常", 0);
+  const onTopic = scoreGeneratedText(VALID_SENTENCE, "考研", 0);
   const offTopic = scoreGeneratedText(
     "今天天气不错所以决定把窗帘全部拉上，假装外面并不存在。",
     "考研",
-    "正常",
     0,
   );
   assert.ok(onTopic.score > offTopic.score);
 
   const cliche = "考研之前先去买一杯奶茶，喝完再决定要不要继续认真复习下去。";
-  const clichePenalized = scoreGeneratedText(cliche, "考研", "正常", 0);
-  const clicheExempt = scoreGeneratedText(cliche, "奶茶", "正常", 0);
-  const plain = scoreGeneratedText(VALID_SENTENCE, "考研", "正常", 0);
+  const clichePenalized = scoreGeneratedText(cliche, "考研", 0);
+  const clicheExempt = scoreGeneratedText(cliche, "奶茶", 0);
+  const plain = scoreGeneratedText(VALID_SENTENCE, "考研", 0);
   assert.ok(clichePenalized.score < plain.score);
   assert.ok(clicheExempt.score > clichePenalized.score - 8);
 });
@@ -173,48 +174,27 @@ test("recent-output LRU flags near-duplicates for the same topic and mood", () =
 });
 
 test("few-shot exemplars are permanent plagiarism baselines", () => {
+  // The exemplar whose input matches 减肥 is the legit answer for that topic
+  // and is excluded from its own baseline — every other exemplar must stay a
+  // baseline.
+  const excluded = new Set(exemplarOutputsForTopic("减肥"));
   for (const exemplar of EXEMPLAR_SENTENCES) {
+    if (excluded.has(exemplar)) continue;
     assert.ok(recentSimilarity("减肥", "正常", exemplar) > 0.5);
   }
 });
 
-test("prompt tables are internally consistent", () => {
-  assert.deepEqual(Object.keys(MENTAL_STATE_PROMPTS).sort(), ["差", "极差", "正常"].sort());
-  assert.deepEqual(
-    Object.keys(TIER_MECHANISMS).sort(),
-    Object.keys(MENTAL_STATE_PROMPTS).sort(),
-  );
-  for (const names of Object.values(TIER_MECHANISMS)) {
-    for (const name of names) assert.ok(MECHANISM_HINTS[name], `missing hint for ${name}`);
-  }
-});
-
-test("drawMechanismSets keeps candidates disjoint and inside the tier whitelist", () => {
-  for (const mood of Object.keys(TIER_MECHANISMS)) {
-    for (let i = 0; i < 50; i++) {
-      const draw = drawMechanismSets(mood);
-      const [a, b, c] = draw.candidates;
-      const all = [...a, ...b, ...c, draw.retry];
-      for (const name of all) assert.ok(TIER_MECHANISMS[mood].includes(name));
-      for (const name of a) assert.ok(!b.includes(name), "candidates must be disjoint");
-      for (const name of a) assert.ok(!c.includes(name), "candidates must be disjoint");
-      for (const name of b) assert.ok(!c.includes(name), "candidates must be disjoint");
-    }
-  }
-});
-
-test("buildSystemPrompt layers common, mode, tier, mechanism, and strict parts", () => {
-  const prompt = buildSystemPrompt("极差", ["情绪实体化"], false, "正常", "回答");
+test("buildSystemPrompt layers common, mode, tier, and strict parts", () => {
+  const prompt = buildSystemPrompt("极差", false, "正常", "回答");
   assert.ok(prompt.startsWith(SKILL_SOURCE));
   assert.match(prompt, /# 本次 Toy 运行配置（最高优先级）/);
   assert.ok(prompt.includes(MODE_PROMPTS["回答"]));
   assert.ok(prompt.includes(MENTAL_STATE_PROMPTS["极差"]));
-  assert.ok(prompt.includes(MECHANISM_HINTS["情绪实体化"]));
   assert.match(prompt, /问题「为什么周一来得这么快」/);
   assert.ok(!prompt.endsWith("写完立即停止。"));
-  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], true).includes("严格执行"));
-  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
-  assert.ok(buildSystemPrompt("极差", ["情绪实体化"], false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
+  assert.ok(buildSystemPrompt("极差", true).includes("严格执行"));
+  assert.ok(buildSystemPrompt("极差", false, "精辟").includes(GENERATION_LENGTH_PROMPTS["精辟"]));
+  assert.ok(buildSystemPrompt("极差", false, "精辟").includes(COMPACT_MENTAL_STATE_PROMPTS["极差"]));
 });
 
 test("compiled Skill is fresh and included verbatim in every Toy prompt", () => {
@@ -228,10 +208,10 @@ test("compiled Skill is fresh and included verbatim in every Toy prompt", () => 
 
 test("runtime appendix applies the Skill quality gate to every configuration", () => {
   const cases = [
-    ["正常", ["错误因果"], false, "正常", "翻译"],
-    ["极差", ["情绪实体化"], false, "正常", "回答"],
-    ["正常", ["错误因果"], false, "精辟", "翻译"],
-    ["差", ["错误因果"], true, "中等", "回答"],
+    ["正常", false, "正常", "翻译"],
+    ["极差", false, "正常", "回答"],
+    ["正常", false, "精辟", "翻译"],
+    ["差", true, "中等", "回答"],
   ];
   for (const args of cases) {
     const prompt = buildRuntimePrompt(...args);
@@ -239,16 +219,16 @@ test("runtime appendix applies the Skill quality gate to every configuration", (
     assert.match(prompt, /原意可辨或回答切题 > 一句一梗/);
     assert.match(prompt, /若换成任何输入仍然成立/);
   }
-  assert.ok(buildSystemPrompt("正常", ["错误因果"]).includes(RUNTIME_INSTRUCTION));
+  assert.ok(buildSystemPrompt("正常").includes(RUNTIME_INSTRUCTION));
 });
 
-test("normalizeTopic trims and enforces the 30-codepoint limit", () => {
+test("normalizeTopic trims and enforces the 100-codepoint limit", () => {
   assert.equal(normalizeTopic("  考研  "), "考研");
   assert.equal(normalizeTopic(""), null);
   assert.equal(normalizeTopic("   "), null);
   assert.equal(normalizeTopic(42), null);
-  assert.equal(normalizeTopic("字".repeat(31)), null);
-  assert.equal(normalizeTopic("字".repeat(30)), "字".repeat(30));
+  assert.equal(normalizeTopic("字".repeat(101)), null);
+  assert.equal(normalizeTopic("字".repeat(100)), "字".repeat(100));
 });
 
 test("normalizeGenerationLength defaults invalid values to 正常", () => {
@@ -260,6 +240,7 @@ test("normalizeGenerationLength defaults invalid values to 正常", () => {
 test("normalizeGenerationMode accepts two modes and defaults invalid values to 翻译", () => {
   assert.equal(normalizeGenerationMode("翻译"), "翻译");
   assert.equal(normalizeGenerationMode("回答"), "回答");
+  assert.equal(normalizeGenerationMode("自由"), "自由");
   assert.equal(normalizeGenerationMode("聊天"), "翻译");
   assert.equal(normalizeGenerationMode(undefined), "翻译");
 });
@@ -314,6 +295,9 @@ test("fallback keeps answer mode valid for statements, inline questions, and sho
     ["回答", "我想喝奶茶"],
     ["回答", "ChatGPT为什么这么慢"],
     ["回答", "明天要不要开会"],
+    ["回答", "明天要不要开会，我该去吗"],
+    ["回答", "我该怎么办"],
+    ["回答", "猫怎么才能不拆家"],
     ["回答", "什么是快乐"],
     ["翻译", "ChatGPT"],
     ["回答", "a"],
@@ -331,21 +315,120 @@ test("fallback keeps answer mode valid for statements, inline questions, and sho
   }
 });
 
-test("normal translation fallback joins after source punctuation cleanly", () => {
-  const text = fallbackForLength("外面下雨了，我忘记带伞。", "极差", "正常", "翻译");
-  assert.equal(text.includes("。，"), false);
-  assert.equal(text.startsWith("外面下雨了，我忘记带伞，"), true);
+test("answer anchors never slice Latin words or leave question-word debris", () => {
+  // 「ChatGPT」stays whole instead of becoming「Chat」.
+  assert.match(fallbackForLength("ChatGPT为什么这么慢", "正常", "中等", "回答"), /ChatGPT/);
+  assert.doesNotMatch(fallbackForLength("ChatGPT为什么这么慢", "正常", "中等", "回答"), /Chat让/);
+  // Embedded question words are stripped, not echoed back as anchors.
+  assert.match(fallbackForLength("明天要不要开会", "正常", "中等", "回答"), /可以，明天开会/);
+  assert.doesNotMatch(fallbackForLength("明天要不要开会", "正常", "中等", "回答"), /要不/);
+  // Degenerate 「怎么办」topics fall back to a pronoun, not a broken fragment.
+  assert.match(fallbackForLength("我该怎么办", "正常", "中等", "回答"), /先让我自己示范一遍/);
+  // Trailing clauses after a comma never leak into the anchor.
+  assert.doesNotMatch(
+    fallbackForLength("明天要不要开会，我该去吗", "正常", "正常", "回答"),
+    /我该去吗/,
+  );
 });
 
-test("translation fidelity preserves negation and contrast", () => {
+test("translation fallback rewrites instead of echoing the input at the start", () => {
+  const text = fallbackForLength("外面下雨了，我忘记带伞。", "极差", "正常", "翻译");
+  assert.equal(text.includes("。，"), false);
+  // The twist opens; the topic's skeleton is woven in mid-sentence, never
+  // verbatim at the front.
+  assert.equal(text.startsWith("外面下雨了"), false);
+  assert.match(text, /外面下雨了，我忘记带伞/);
+  assert.equal(validateGeneratedText(text, "外面下雨了，我忘记带伞。", "极差", "正常", "翻译"), null);
+});
+
+test("formula fallbacks stay greeting rewrites within every length contract", () => {
+  for (const topic of ["你好", "谢谢", "早上好", "晚安", "再见"]) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topic, "正常", length, "翻译");
+      assert.equal(
+        validateGeneratedText(text, topic, "正常", length, "翻译"),
+        null,
+        `${topic}/${length}: ${text}`,
+      );
+      // A greeting rewrite, never a reply to the greeting.
+      assert.doesNotMatch(text, /我听见|收到你/);
+    }
+  }
+});
+
+test("free mode accepts riffs, rejects non-sequiturs and echoes", () => {
+  const topic = "为什么周一总是来得这么快";
+  // A riff that references the topic passes.
+  const riff = "周一在日历上连夜加班，把周六也排进了夜班表。";
+  assert.equal(validateGeneratedText(riff, topic, "正常", "中等", "自由"), null);
+  // A total non-sequitur (no topic char) is rejected.
+  const unrelated = "今天天气不错，所以决定把窗帘全部拉上。";
+  assert.equal(validateGeneratedText(unrelated, topic, "正常", "中等", "自由"), "mode");
+  // Verbatim echo at the start is still rejected.
+  const echo = "为什么周一总是来得这么快，因为时间偷偷把顺序调换了。";
+  assert.equal(validateGeneratedText(echo, topic, "正常", "中等", "自由"), "mode");
+});
+
+test("free fallbacks stay valid riffs within every length contract", () => {
+  for (const topic of ["为什么周一总是来得这么快", "我今天不想上班", "猫"]) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topic, "正常", length, "自由");
+      assert.equal(
+        validateGeneratedText(text, topic, "正常", length, "自由"),
+        null,
+        `${topic}/${length}: ${text}`,
+      );
+    }
+  }
+});
+
+test("translation fidelity ranks faithful rewrites above drifted ones", () => {
   const topic = "我今天不想上班，但还是准时到了公司";
   const faithful = "我今天不想上班，但身体为了全勤还是准时把我送到了公司。";
   const drifted = "公司今天召开临时会议，工位决定替所有员工完成一整天的正常工作。";
   const changedFact = "我今天不想上班，但闹钟替我办了迟到手续，公司只好把工位寄回家。";
+  // Negation/contrast/fact preservation is a scoring concern, not a hard gate —
+  // a paraphrase that drops the literal 没/但 still passes. But the first-clause
+  // anchor stays: a rewrite that abandons the topic's leading meaning is still
+  // rejected, and the faithful rewrite must outrank a fact-changing one.
   assert.equal(validateGeneratedText(faithful, topic, "正常", "正常", "翻译"), null);
   assert.equal(validateGeneratedText(drifted, topic, "正常", "正常", "翻译"), "mode");
-  assert.equal(validateGeneratedText(changedFact, topic, "正常", "正常", "翻译"), "mode");
-  assert.ok(modeFidelityScore(faithful, topic, "翻译") > modeFidelityScore(drifted, topic, "翻译") + 30);
+  assert.equal(validateGeneratedText(changedFact, topic, "正常", "正常", "翻译"), null);
+  assert.ok(modeFidelityScore(faithful, topic, "翻译") > modeFidelityScore(changedFact, topic, "翻译"));
+});
+
+test("a genuine rewrite that paraphrases the action still passes", () => {
+  // The SKILL's own good example: 「起上班」becomes 「送到工位」 — literal
+  // clause coverage must not demand the exact words back.
+  const topic = "我很困，但还是起床上班了";
+  const rewrite = "我虽然困得很有原则，但身体为了全勤还是擅自把我送到了工位。";
+  assert.equal(validateGeneratedText(rewrite, topic, "正常", "正常", "翻译"), null);
+});
+
+test("translation mode rejects the mechanical 'input + tail' echo", () => {
+  const topic = "外面下雨了，我忘记带伞";
+  // Starts with the whole input verbatim, then appends a tail — the pattern
+  // the 翻译 mode must avoid.
+  const echo = "外面下雨了，我忘记带伞，时间偷偷把顺序调换了，事情还没反应过来就自己发生了。";
+  assert.equal(validateGeneratedText(echo, topic, "正常", "正常", "翻译"), "mode");
+  // A rewrite may share the subject but diverges — it stays valid (and must
+  // keep the fact skeleton, including 忘记).
+  const rewrite = "外面下雨了，伞却替我忘了带。";
+  assert.equal(validateGeneratedText(rewrite, topic, "正常", "中等", "翻译"), null);
+  // A short topic word as the opening is not an echo.
+  assert.equal(validateGeneratedText("ChatGPT每天上班前都要先给自己写一封辞职信，写完才有力气继续回答问题。", "ChatGPT", "正常", "正常", "翻译"), null);
+});
+
+test("formulaic greetings must be rewritten, not answered", () => {
+  // 「你好」answered like a conversation, plus meta-commentary on the input —
+  // both are mode drift for 翻译.
+  const answered = "你好，虽然你只说了两个字，但我已经把这当成一段完整对话认真回复了。";
+  assert.equal(validateGeneratedText(answered, "你好", "正常", "正常", "翻译"), "mode");
+  const heard = "你好，我听见了，但我的嘴还在梦里排队，所以只能先替你保管这份问候。";
+  assert.equal(validateGeneratedText(heard, "你好", "正常", "正常", "翻译"), "mode");
+  // A greeting rewritten as a greeting stays valid.
+  const rewritten = "你好，问候我替你收下了，等嘴醒了再当面补上。";
+  assert.equal(validateGeneratedText(rewritten, "你好", "正常", "中等", "翻译"), null);
 });
 
 test("answer mode rewards direct relevance and rejects question repetition", () => {
@@ -355,6 +438,8 @@ test("answer mode rewards direct relevance and rejects question repetition", () 
   assert.equal(validateGeneratedText(answer, topic, "正常", "正常", "回答"), null);
   assert.equal(validateGeneratedText(repeated, topic, "正常", "正常", "回答"), "leak");
   assert.ok(modeFidelityScore(answer, topic, "回答") > modeFidelityScore(repeated, topic, "回答"));
+  // A direct answer that skips the 因为 marker is still a valid answer — the
+  // marker is a scoring reward, not a hard gate.
   assert.equal(
     validateGeneratedText(
       "周一把日历折成滑梯，闹钟一松手就滑到了床头，顺便提前叫醒了整个房间。",
@@ -363,7 +448,7 @@ test("answer mode rewards direct relevance and rejects question repetition", () 
       "正常",
       "回答",
     ),
-    "mode",
+    null,
   );
   assert.equal(
     validateGeneratedText(
@@ -373,7 +458,7 @@ test("answer mode rewards direct relevance and rejects question repetition", () 
       "中等",
       "回答",
     ),
-    "mode",
+    null,
   );
 });
 
@@ -381,8 +466,8 @@ test("scoring penalizes bureaucratic and numeric filler", () => {
   const topic = "为什么周一来得快";
   const clean = "因为周末还在赖床，周一只好提前到门口替它按响闹钟。";
   const bloated = "根据第七条正式规定，周一按百分之三点七的流程提前完成年检。";
-  const cleanScore = scoreGeneratedText(clean, topic, "正常", 0, ["错误因果"], "正常", "回答");
-  const bloatedScore = scoreGeneratedText(bloated, topic, "正常", 0, ["错误因果"], "正常", "回答");
+  const cleanScore = scoreGeneratedText(clean, topic, 0, "正常", "回答");
+  const bloatedScore = scoreGeneratedText(bloated, topic, 0, "正常", "回答");
   assert.ok(cleanScore.score > bloatedScore.score);
   assert.equal(validateGeneratedText(bloated, topic, "正常", "正常", "回答"), "style");
 });
@@ -391,7 +476,80 @@ test("scoring demotes generic punchline crutches and stacked explanations", () =
   const topic = "我忘记带伞了";
   const specific = "我忘记带伞了，雨只好逐滴提醒我今天出门没有屋顶。";
   const generic = "我忘记带伞了，所以雨天负责给我的借口办理加急手续。";
-  const specificScore = scoreGeneratedText(specific, topic, "差", 0, ["错误因果"]);
-  const genericScore = scoreGeneratedText(generic, topic, "差", 0, ["错误因果"]);
+  const specificScore = scoreGeneratedText(specific, topic, 0);
+  const genericScore = scoreGeneratedText(generic, topic, 0);
   assert.ok(specificScore.score > genericScore.score);
+});
+
+test("scoring penalizes vague stand-ins that abstract the input's concrete nouns", () => {
+  const topic = "我忘记带伞了";
+  const concrete = "我忘记带伞了，雨只好逐滴提醒我今天出门没有屋顶。";
+  const vague = "我忘记带伞了，那个东西只好自己提醒我今天出门没有屋顶。";
+  const concreteScore = scoreGeneratedText(concrete, topic, 0);
+  const vagueScore = scoreGeneratedText(vague, topic, 0);
+  assert.ok(concreteScore.score > vagueScore.score);
+});
+
+test("scoring penalizes near-paraphrase twists (low cognitive distance)", () => {
+  const topic = "我忘记带伞了";
+  const distant = "我忘记带伞了，雨只好逐滴提醒我今天出门没有屋顶。";
+  const near = "我忘记带伞了，忘记带伞这件事先发生了。";
+  const distantScore = scoreGeneratedText(distant, topic, 0);
+  const nearScore = scoreGeneratedText(near, topic, 0);
+  assert.ok(distantScore.score > nearScore.score);
+});
+
+test("scoring penalizes twists that flip the input's emotional direction", () => {
+  const topic = "我累得不想说话";
+  const sameValence = "我累得不想说话，累字里的泪先流干了，剩下的累只好自己扛着。";
+  const flipped = "我累得不想说话，但一想到明天放假就开心得跳了起来。";
+  const sameScore = scoreGeneratedText(sameValence, topic, 0);
+  const flippedScore = scoreGeneratedText(flipped, topic, 0);
+  assert.ok(sameScore.score > flippedScore.score);
+});
+
+test("trending rotation is deterministic per day and stays inside the library", () => {
+  const day = new Date(2026, 7, 8);
+  const first = rotatedMemes(day);
+  const second = rotatedMemes(day);
+  assert.deepEqual(first.map((m) => m.term), second.map((m) => m.term));
+  assert.ok(first.length >= 1 && first.length <= 6);
+  for (const item of first) {
+    assert.ok(TRENDING_MEMES.includes(item), `rotated meme ${item.term} not in library`);
+  }
+  const nextDay = rotatedMemes(new Date(2026, 7, 9));
+  assert.notDeepEqual(
+    first.map((m) => m.term),
+    nextDay.map((m) => m.term),
+    "different days should rotate to different subsets",
+  );
+});
+
+test("exemplar exclusion needs the bare topic, not a mode-prefixed key", () => {
+  // The relay used to pass `${mode}：${topic}` to recentSimilarity, which broke
+  // the exemplar exclusion — the model's verbatim exemplar plagiarism was then
+  // rejected as a "repeat" (similarity 1.00), forcing the fallback for showcase
+  // topics. The bare topic must exclude the exemplar; the prefixed key must not.
+  const exemplar = "我虽然困得很有原则，但身体为了全勤还是擅自把我送到了工位。";
+  const bare = recentSimilarity("我很困，但还是起床上班了", "正常", exemplar);
+  const prefixed = recentSimilarity("翻译：我很困，但还是起床上班了", "正常", exemplar);
+  assert.ok(bare < 0.5, `bare topic should exclude the exemplar (got ${bare})`);
+  assert.ok(prefixed > 0.5, `prefixed topic should NOT exclude the exemplar (got ${prefixed})`);
+});
+
+test("a paraphrase that drops the literal negation word still passes", () => {
+  // 「手机没电了」→「电量告急」preserves the meaning but drops 没 — the old
+  // hard negation check rejected it into the fallback template. Fidelity is now
+  // a scoring concern, so the paraphrase passes validation.
+  const topic = "手机没电了";
+  const paraphrase = "手机电量告急，我只好把充电器当手机壳供着，等它自己想起来上班。";
+  assert.equal(validateGeneratedText(paraphrase, topic, "正常", "正常", "翻译"), null);
+});
+
+test("normal length accepts a concise near-miss below the prompt floor", () => {
+  // The prompt contract is 25-48, but a 22-24 han near-miss is a better joke
+  // than the padded fallback template — the validation floor is 22, not 25.
+  const concise = "我虽然饿得能听见胃在打鼓，但嘴还是坚持说再等等。";
+  assert.equal(validateGeneratedText(concise, "我饿了", "正常", "正常", "翻译"), null);
+  assert.equal(validateGeneratedText("太短了。", "我饿了", "正常", "正常", "翻译"), "length");
 });

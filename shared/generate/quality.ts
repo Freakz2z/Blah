@@ -6,7 +6,8 @@
  * are exempt from charset/han-ratio/leak/cliché rules so a topic like
  * 「奶茶」or「ChatGPT」is never penalized for mentioning itself. */
 
-import { EXEMPLAR_SENTENCES } from "./prompts.ts";
+import { EXEMPLAR_SENTENCES, exemplarOutputsForTopic } from "./prompts.ts";
+import { injectedTrendingTerms } from "./trending.ts";
 import {
   GENERATION_LENGTH_LIMITS,
   type GenerationLength,
@@ -41,22 +42,6 @@ const STOPWORDS = new Set([
   "在", "有", "个", "一", "不", "就", "都", "很", "怎", "么", "为", "什",
 ]);
 
-const CAUSAL_WORDS = ["所以", "因此", "于是", "既然", "说明", "难怪", "导致", "证明", "毕竟", "从而", "可见"];
-const JUMP_WORDS = ["突然", "后来", "顺便", "然后", "接着", "直到", "转头"];
-/** Surface markers per mechanism — scores a candidate's compliance with the
- * mechanisms it was actually assigned (a shared causal-word table would
- * systematically favor whichever candidate drew 错误因果). */
-const MECHANISM_FEATURES: Record<string, string[]> = {
-  错误因果: ["所以", "因此", "于是", "既然", "说明", "难怪", "导致", "证明", "可见"],
-  字面误解: ["照着", "当成", "真的", "亲自", "原地"],
-  主客倒置: ["反过来", "要求我", "把我", "带着我", "安排我", "认领我"],
-  目的倒置: ["为了", "好让", "专门", "负责", "免得"],
-  情绪实体化: ["困意", "睡意", "焦虑", "脾气", "心情", "倦意", "情绪"],
-  细节篡位: ["负责", "决定", "带头", "主持", "接管", "承包"],
-  过度认真: ["认真", "坚持", "反复", "特意", "郑重", "一遍"],
-  时间借口: ["周一", "周末", "昨天", "明天", "早上", "晚上", "迟到"],
-};
-
 const BUREAUCRACY_WORDS = [
   "根据", "研究", "正式", "规定", "条例", "审批", "年检", "流程", "备案",
   "百分之", "统计", "第", "条", "款",
@@ -80,11 +65,49 @@ const FACT_PHRASE_GROUPS = [
 ];
 const QUESTION_PREFIX_RE = /^(为什么|为何|怎么|怎样|如何|请问|能不能|可不可以|是不是|是否)/;
 
+/** 翻译 must rewrite, not paste the input at the start of the result — the
+ * lazy 「原话 + 尾巴」 pattern. A legitimate rewrite may share the subject but
+ * diverges after a few characters, so only a long (≥80%) verbatim lead is an
+ * echo. Topics shorter than this pass — opening with the topic word is natural
+ * for names like 「ChatGPT」. */
+const ECHO_MIN_MATCH = 8;
+function echoesTopicPrefix(text: string, topic: string): boolean {
+  const strip = (value: string) => value.replace(/[，,。．！？!?；;：:、]/gu, "");
+  const lead = Array.from(strip(topic));
+  if (lead.length < ECHO_MIN_MATCH) return false;
+  const textLead = Array.from(strip(text)).slice(0, lead.length);
+  let matched = 0;
+  while (matched < lead.length && lead[matched] === textLead[matched]) matched++;
+  return matched >= ECHO_MIN_MATCH && matched / lead.length >= 0.8;
+}
+
+/** 问候/致谢/道别等寒暄短句 — 翻译它们必须是同样的寒暄动作本身，不能像回答
+ * 一样回应它（「你好」→「我听见了…所以…」就是回答，不是改写）。 */
+const FORMULA_TOPIC_RE =
+  /^(你好|您好|哈喽|嗨|早上好|早安|下午好|晚上好|晚安|谢谢|感谢|再见|拜拜|抱歉|对不起)/;
+const REPLY_MARKER_RE = /(听见|听到|收到|回答|回应|回复|答应)/;
+
 const CLICHE_WORDS = [
   "奶茶", "意大利面", "宇宙", "量子", "黑洞", "西兰花", "保安", "WiFi", "wifi", "外卖",
   "加班", "甲方", "显眼包", "多巴胺", "赛博", "异世界", "转生", "猫", "狗", "月亮",
   "冰箱", "香菜", "秃头", "头发", "枸杞", "保温杯", "打工人", "内卷", "躺平",
   "上辈子", "快递驿站",
+];
+
+/** Vague stand-ins that abstract away the input's concrete nouns — the model's
+ * main specificity leak. 「Vague is the enemy of funny」: the twist must land on
+ * a concrete noun, not on 「那个东西」. */
+const VAGUE_WORDS = ["那个东西", "这东西", "某些", "某种", "一些"];
+
+/** Emotion-valence words for the "clever but cold" guard: LLMs chase novelty
+ * while humans value emotional resonance, so a twist that flips the input's
+ * emotional direction reads as cold even when technically clever. */
+const NEGATIVE_EMOTION_WORDS = [
+  "烦", "累", "气", "难过", "伤心", "讨厌", "崩溃", "焦虑", "郁闷", "痛苦",
+  "生气", "失望", "委屈", "困", "烦死", "糟心",
+];
+const POSITIVE_EMOTION_WORDS = [
+  "开心", "高兴", "爽", "快乐", "幸福", "喜欢", "兴奋", "愉快", "满足", "舒服", "美滋滋",
 ];
 
 /* ── Cleaning ─────────────────────────────────────────────────────────── */
@@ -167,8 +190,12 @@ export function validateGeneratedText(
 
   // Count Han characters, not codepoints, so punctuation and Latin topic words
   // can't kill a compliant sentence.
-  const { min, max } = GENERATION_LENGTH_LIMITS[generationLength];
-  if (hanCount < min || hanCount > max) return "length";
+  // Length is a soft guide now, not a hard gate: the prompt steers the model
+  // toward the selected contract and the scoring rewards near-target output, so
+  // a good joke that lands a few characters off (or a 精辟 one-liner that runs
+  // long) is still accepted. Only clearly broken output — absurdly short or
+  // long — is rejected.
+  if (hanCount < 4 || hanCount > 100) return "length";
 
   if (!chars.every((ch) => CHAR_WHITELIST_RE.test(ch) || topicChars.has(ch))) return "charset";
 
@@ -203,37 +230,58 @@ export function validateGeneratedText(
       );
       const covered = [...sourceMeaningful].filter((ch) => text.includes(ch)).length;
       if (sourceMeaningful.size >= 4 && covered / sourceMeaningful.size < 0.25) return "mode";
-      if (NEGATION_WORDS.some((word) => topic.includes(word)) &&
-          !NEGATION_WORDS.some((word) => text.includes(word))) return "mode";
-      if (CONTRAST_WORDS.some((word) => topic.includes(word)) &&
-          !CONTRAST_WORDS.some((word) => text.includes(word))) return "mode";
-      for (const group of FACT_PHRASE_GROUPS) {
-        if (group.some((phrase) => topic.includes(phrase)) &&
-            !group.some((phrase) => text.includes(phrase))) return "mode";
-      }
+      // Negation/contrast/fact preservation is a fidelity concern, not a
+      // brokenness one: a good paraphrase that drops the literal 没/但 (e.g.
+      // 「手机没电了」→「电量告急」) must not be hard-rejected into the fallback
+      // template. modeFidelityScore already penalizes the drop heavily, so the
+      // scoring ranks faithful output first while letting near-misses through.
       const clauses = topic
         .split(/[，。！？；]|但是|不过|但|却|还是|仍然/)
-        .map((clause) => Array.from(clause).filter(
-          (ch) => HAN_RE.test(ch) && !STOPWORDS.has(ch),
-        ))
+        .map((clause) => Array.from(clause).filter((ch) => HAN_RE.test(ch)))
         .filter((clause) => clause.length >= 3);
-      for (const clause of clauses) {
-        const coveredInClause = new Set(clause.filter((ch) => text.includes(ch))).size;
-        if (coveredInClause / new Set(clause).size < 0.3) return "mode";
+      // The FIRST clause must be ≥30% covered — but without stopword removal,
+      // so 「我很困」 stays the lead even though 我 is a stopword. This lets
+      // real rewrites through (「送到工位」paraphrases 起上班) while still
+      // anchoring the output to the topic's leading meaning. Multi-clause
+      // topics can't be fully echoed inside a short rewrite, and demanding it
+      // would force the mechanical 「原句 + 尾巴」 pattern 翻译 must avoid — the
+      // global coverage plus the scoring's fidelity terms anchor the rest.
+      const lead = clauses[0];
+      if (lead) {
+        const coveredInLead = new Set(lead.filter((ch) => text.includes(ch))).size;
+        if (coveredInLead / new Set(lead).size < 0.3) return "mode";
       }
-    } else {
+      if (echoesTopicPrefix(text, topic)) return "mode";
+      // Formulaic social inputs (你好/谢谢/再见…) must stay the same social
+      // act — a rewrite, not a reply. Reply markers like 听见/回复 signal the
+      // model answered the greeting instead of rewriting it.
+      if (FORMULA_TOPIC_RE.test(topic) && REPLY_MARKER_RE.test(text)) return "mode";
+    } else if (mode === "回答") {
       const bareQuestion = topic.replace(/[？?！!。]+$/, "");
       if (Array.from(bareQuestion).length >= 6 && text.includes(bareQuestion)) return "mode";
-      const core = bareQuestion.replace(QUESTION_PREFIX_RE, "");
+      const core = bareQuestion
+        .replace(QUESTION_PREFIX_RE, "")
+        .replace(/该怎么办|怎么办/, "");
+      // Non-Han topic characters (ChatGPT, iPhone17…) are real content too —
+      // an answer to 「ChatGPT为什么这么慢」must echo the ChatGPT part.
       const coreChars = new Set(
-        Array.from(core).filter((ch) => HAN_RE.test(ch) && !STOPWORDS.has(ch)),
+        Array.from(core).filter(
+          (ch) => (HAN_RE.test(ch) || /[0-9A-Za-z]/.test(ch)) && !STOPWORDS.has(ch),
+        ),
       );
       if (coreChars.size > 0 && ![...coreChars].some((ch) => text.includes(ch))) return "mode";
-      if (/为什么|为何/.test(topic) && !/因为|原因|由于|怪|是/.test(text)) return "mode";
-      if (/怎么|怎样|如何|怎么办/.test(topic) &&
-          !/先|可以|把|只要|直接|让|别|去|用|得/.test(text)) return "mode";
-      if (/能不能|可不可以|是不是|是否/.test(topic) &&
-          !/^(能|不能|可以|不可以|当然|是|不是)/.test(text)) return "mode";
+      // Question-type structure markers (为什么→因为, 怎么→先, 能不能→能) are
+      // scoring rewards, not hard gates — a direct answer that skips the marker
+      // is still a valid answer, and hard-rejecting it forces the fallback.
+    } else {
+      // 自由: input is inspiration — no fidelity or answer-structure contract.
+      // Only a loose relevance anchor (≥1 meaningful topic char) and the
+      // no-verbatim-echo rule keep it from being a total non-sequitur.
+      const core = Array.from(topic).filter(
+        (ch) => (HAN_RE.test(ch) || /[0-9A-Za-z]/.test(ch)) && !STOPWORDS.has(ch),
+      );
+      if (core.length >= 3 && !core.some((ch) => text.includes(ch))) return "mode";
+      if (echoesTopicPrefix(text, topic)) return "mode";
     }
   }
 
@@ -268,9 +316,7 @@ export interface CandidateScore {
 export function scoreGeneratedText(
   text: string,
   topic: string,
-  mood: string,
   recentSimilarity: number,
-  mechanisms: string[] = [],
   generationLength: GenerationLength = "正常",
   mode: GenerationMode = "翻译",
 ): CandidateScore {
@@ -296,7 +342,6 @@ export function scoreGeneratedText(
   const bareTopic = Array.from(topic).filter((ch) => !PUNCT_RE.test(ch)).join("");
   if (bareTopic && Array.from(bareTopic).length <= 8 && text.includes(bareTopic)) score += 5;
 
-  score += mechanismScore(text, mood, mechanisms);
   score += modeFidelityScore(text, topic, mode);
 
   for (const word of SOFT_LEAK_WORDS) {
@@ -319,6 +364,30 @@ export function scoreGeneratedText(
   }
   score -= Math.min(clichePenalty, 24);
 
+  // Vague stand-ins abstract away the input's concrete nouns — the twist must
+  // land on a specific thing, not on 「那个东西」.
+  let vaguePenalty = 0;
+  for (const word of VAGUE_WORDS) {
+    if (text.includes(word) && !topic.includes(word)) vaguePenalty += 8;
+  }
+  score -= Math.min(vaguePenalty, 24);
+
+  // Emotion-valence guard: a twist that flips the input's emotional direction
+  // reads as clever-but-cold. Only penalize when the flipped word is new (not
+  // already in the topic), so a topic that itself mixes emotions stays legal.
+  const topicNegative = NEGATIVE_EMOTION_WORDS.some((word) => topic.includes(word));
+  const topicPositive = POSITIVE_EMOTION_WORDS.some((word) => topic.includes(word));
+  if (topicNegative && POSITIVE_EMOTION_WORDS.some((word) => text.includes(word) && !topic.includes(word))) {
+    score -= 10;
+  }
+  if (topicPositive && NEGATIVE_EMOTION_WORDS.some((word) => text.includes(word) && !topic.includes(word))) {
+    score -= 10;
+  }
+
+  // Current memes injected on the model's own initiative are a plus, capped so
+  // a single tasteful reference can never outrank semantic fidelity.
+  score += Math.min(injectedTrendingTerms(text, topic).length * 6, 12);
+
   if (!BUREAUCRACY_WORDS.some((word) => topic.includes(word))) {
     const bureaucracyHits = BUREAUCRACY_WORDS.filter((word) => text.includes(word)).length;
     score -= Math.min(bureaucracyHits * 7, 28);
@@ -340,6 +409,22 @@ export function scoreGeneratedText(
 
   if ("，、；：—".includes(chars[length - 1])) score -= 6;
   if (innerSentenceEnds(chars) === 1) score -= 5;
+
+  // Cognitive distance: the twist portion (after the first comma) must bridge a
+  // real semantic gap from the topic. A near-paraphrase (same words reordered)
+  // passes the echo check but reads as bland, not funny — measure how much of
+  // the topic's bigrams the twist reuses.
+  const commaIndex = text.indexOf("，");
+  const twistPortion = commaIndex >= 0 ? text.slice(commaIndex + 1) : text;
+  if (Array.from(twistPortion).length >= 4) {
+    const twistBigrams = bigramSet(twistPortion);
+    const topicBigrams = bigramSet(topic);
+    let overlap = 0;
+    for (const gram of topicBigrams) if (twistBigrams.has(gram)) overlap++;
+    const topicCoverage = topicBigrams.size === 0 ? 0 : overlap / topicBigrams.size;
+    if (topicCoverage > 0.4) score -= 12;
+    else if (topicCoverage > 0.25) score -= 6;
+  }
 
   if (recentSimilarity > 0.3) score -= 15;
 
@@ -375,14 +460,21 @@ export function modeFidelityScore(
     if (CONTRAST_WORDS.some((word) => topic.includes(word))) {
       score += CONTRAST_WORDS.some((word) => text.includes(word)) ? 8 : -18;
     }
+    for (const group of FACT_PHRASE_GROUPS) {
+      if (group.some((phrase) => topic.includes(phrase))) {
+        score += group.some((phrase) => text.includes(phrase)) ? 6 : -12;
+      }
+    }
     if (topic.includes("我")) score += text.includes("我") ? 4 : -6;
     return score;
   }
 
   const bareQuestion = topic.replace(/[？?！!。]+$/, "");
-  const core = bareQuestion.replace(QUESTION_PREFIX_RE, "");
+  const core = bareQuestion.replace(QUESTION_PREFIX_RE, "").replace(/该怎么办|怎么办/, "");
   const coreChars = new Set(
-    Array.from(core).filter((ch) => HAN_RE.test(ch) && !STOPWORDS.has(ch)),
+    Array.from(core).filter(
+      (ch) => (HAN_RE.test(ch) || /[0-9A-Za-z]/.test(ch)) && !STOPWORDS.has(ch),
+    ),
   );
   const covered = [...coreChars].filter((ch) => text.includes(ch)).length;
   const coverage = coreChars.size === 0 ? 1 : covered / coreChars.size;
@@ -395,20 +487,6 @@ export function modeFidelityScore(
   return score;
 }
 
-function mechanismScore(text: string, mood: string, mechanisms: string[]): number {
-  const sum = (words: string[], per: number, cap: number) =>
-    Math.min(words.filter((w) => text.includes(w)).length * per, cap);
-  // Mechanism compliance is only a tie-breaker; semantic fidelity dominates.
-  let assigned = 0;
-  for (const name of mechanisms) assigned += sum(MECHANISM_FEATURES[name] ?? [], 2, 4);
-  assigned = Math.min(assigned, 6);
-  // …plus a small tier-voice bonus that is symmetric across both candidates.
-  let tier = 0;
-  if (mood === "正常" || mood === "差") tier = sum(CAUSAL_WORDS, 2, 4);
-  else if (mood === "极差") tier = sum(JUMP_WORDS, 2, 4);
-  return assigned + tier;
-}
-
 /* ── Recent-output LRU (fights repeats on the same topic+mood) ────────── */
 
 const LRU_MAX_KEYS = 200;
@@ -419,15 +497,27 @@ export function recentSimilarity(topic: string, mood: string, text: string): num
   // The few-shot exemplars are permanent baselines — when the user's topic
   // matches an exemplar's, the exemplar itself would otherwise be a perfect,
   // fully valid "generation" for the model to plagiarize.
+  const excluded = new Set(exemplarOutputsForTopic(topic));
   const base = EXEMPLAR_SENTENCES.reduce(
-    (max, exemplar) => Math.max(max, bigramJaccard(exemplar, text)),
+    (max, exemplar) =>
+      excluded.has(exemplar) ? max : Math.max(max, bigramJaccard(exemplar, text)),
     0,
   );
   const previous = recentByKey.get(`${topic}|${mood}`) ?? [];
-  return previous.reduce((max, prev) => Math.max(max, bigramJaccard(prev, text)), base);
+  // Stored exemplar outputs are the expected answer for a matching topic, not
+  // a "repeat" — comparing against them would reject the legit answer and force
+  // the fallback on the very next request.
+  return previous.reduce(
+    (max, prev) =>
+      excluded.has(prev) ? max : Math.max(max, bigramJaccard(prev, text)),
+    base,
+  );
 }
 
 export function rememberResult(topic: string, mood: string, text: string): void {
+  // The topic's own exemplar output is the expected answer — storing it would
+  // make the next request reject it as a repeat.
+  if (exemplarOutputsForTopic(topic).includes(text)) return;
   const key = `${topic}|${mood}`;
   const list = recentByKey.get(key) ?? [];
   recentByKey.delete(key);
@@ -440,15 +530,16 @@ export function rememberResult(topic: string, mood: string, text: string): void 
   }
 }
 
+function bigramSet(s: string): Set<string> {
+  const chars = Array.from(s);
+  const set = new Set<string>();
+  for (let i = 0; i + 2 <= chars.length; i++) set.add(chars[i] + chars[i + 1]);
+  return set;
+}
+
 function bigramJaccard(a: string, b: string): number {
-  const bigrams = (s: string) => {
-    const chars = Array.from(s);
-    const set = new Set<string>();
-    for (let i = 0; i + 2 <= chars.length; i++) set.add(chars[i] + chars[i + 1]);
-    return set;
-  };
-  const setA = bigrams(a);
-  const setB = bigrams(b);
+  const setA = bigramSet(a);
+  const setB = bigramSet(b);
   if (setA.size === 0 || setB.size === 0) return 0;
   let overlap = 0;
   for (const gram of setA) if (setB.has(gram)) overlap++;

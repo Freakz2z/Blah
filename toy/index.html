@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>胡言乱语生成器</title>
     <meta name="description" content="改写你的原话，或者直接生成一句荒诞但通顺的回答。" />
+    <!-- Toy JS SDK: cloud storage (history sync) and leaderboard. Absent or
+         failing gracefully is fine — every capability call is guarded. -->
+    <script src="//s1.hdslb.com/bfs/seed/toy/app/sdk/toy-sdk.js"></script>
     <script>
-      window.__BLAHBLAH_STANDALONE_TOY__ = true;
       // This URL is public by design; the API key stays in the Worker Secret.
       window.__BLAHBLAH_TOY_RELAY_URL__ = "https://api.freakz2z.com";
     </script>

@@ -1,6 +1,5 @@
 import {
   buildRuntimePrompt,
-  drawMechanismSets,
   RUNTIME_INSTRUCTION,
 } from "../../shared/generate/prompts.ts";
 import {
@@ -22,6 +21,10 @@ import {
   type GenerationMode,
 } from "../../shared/generate/validation.ts";
 import { fallbackForLength } from "../../shared/generate/fallback.ts";
+import { VoteStore } from "./vote-store.ts";
+import { SentenceStore } from "./sentence-store.ts";
+
+export { VoteStore, SentenceStore };
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
@@ -29,7 +32,9 @@ const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
 const OLLAMA_MODEL = "deepseek-v4-flash:0731";
 const DEFAULT_MOOD = "正常";
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_REQUESTS = 10;
+/** Loose but abuse-bounded: 3 model calls per request, so 30/min is ~90
+ * model calls per minute per IP — plenty for real users, a brake on scripts. */
+const RATE_LIMIT_MAX_REQUESTS = 30;
 const MAX_PAYLOAD_BYTES = 8 * 1024;
 const OLLAMA_KEEP_ALIVE = "10m";
 
@@ -44,6 +49,8 @@ interface Env {
   OLLAMA_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   RATE_LIMITER: DurableObjectNamespace;
+  VOTE_STORE: DurableObjectNamespace;
+  SENTENCE_STORE: DurableObjectNamespace;
   TOY_ALLOWED_ORIGINS?: string;
   TOY_PROVIDER?: string;
 }
@@ -51,6 +58,7 @@ interface Env {
 interface DurableObjectStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+  list<T>(options?: { prefix?: string }): Promise<Map<string, T>>;
 }
 
 interface DurableObjectState {
@@ -79,6 +87,8 @@ interface RelayPayload {
   topic?: unknown;
   mode?: unknown;
   length?: unknown;
+  mechanism?: unknown;
+  vote?: unknown;
 }
 
 type ProviderName = "ollama" | "deepseek";
@@ -102,15 +112,27 @@ interface SamplingParams {
 
 const CANDIDATE_PARAMS: Record<
   GenerationMode,
-  [SamplingParams, SamplingParams]
+  [SamplingParams, SamplingParams, SamplingParams]
 > = {
+  // Research (arXiv:2504.02858): 73% of tested LLMs peak at temperature ≤0.5 —
+  // the primary candidate sits in the sweet spot. With mechanisms retired the
+  // three candidates share one prompt, so temperature is the only diversity
+  // lever: widen the spread so a validation-failing default doesn't sink all
+  // three (a correlated failure is what forces the fallback template).
   翻译: [
-    { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 8_500 },
-    { temperature: 0.75, topP: 0.84, maxTokens: 64, timeoutMs: 8_500 },
+    { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 0.8, topP: 0.86, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 1.1, topP: 0.92, maxTokens: 64, timeoutMs: 15_000 },
   ],
   回答: [
-    { temperature: 0.7, topP: 0.82, maxTokens: 64, timeoutMs: 8_500 },
-    { temperature: 0.95, topP: 0.9, maxTokens: 64, timeoutMs: 8_500 },
+    { temperature: 0.6, topP: 0.82, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 0.95, topP: 0.9, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 1.2, topP: 0.95, maxTokens: 64, timeoutMs: 15_000 },
+  ],
+  自由: [
+    { temperature: 0.7, topP: 0.85, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 1.0, topP: 0.92, maxTokens: 64, timeoutMs: 15_000 },
+    { temperature: 1.3, topP: 0.97, maxTokens: 64, timeoutMs: 15_000 },
   ],
 };
 
@@ -122,18 +144,36 @@ function allowedOrigins(env: Env): Set<string> {
   return configured?.length ? new Set(configured) : DEFAULT_ALLOWED_ORIGINS;
 }
 
-function originIsAllowed(request: Request, env: Env): boolean {
+/** Any local dev origin (http://localhost:* / http://127.0.0.1:*) is welcome —
+ * only a browser can mint a real Origin header, so this opens nothing a
+ * non-browser client couldn't already do by simply omitting Origin. */
+export function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function originIsAllowed(request: Request, env: Env): boolean {
   const origin = request.headers.get("Origin");
-  return !origin || allowedOrigins(env).has(origin);
+  return !origin || allowedOrigins(env).has(origin) || isLocalDevOrigin(origin);
 }
 
 function withCors(request: Request, response: Response, env: Env): Response {
   const origin = request.headers.get("Origin");
-  if (!origin || !allowedOrigins(env).has(origin)) return response;
+  // Same allowance as the request gate: whitelisted B站 origins or any local
+  // dev origin. Both must agree, or the browser's CORS check would block a
+  // request the gate already let through.
+  if (!origin || !originIsAllowed(request, env)) return response;
 
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", origin);
-  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Content-Type");
   headers.set("Access-Control-Max-Age", "600");
   headers.set("Vary", headers.get("Vary") ? `${headers.get("Vary")}, Origin` : "Origin");
@@ -209,15 +249,12 @@ function configuredProviders(env: Env): ProviderConfig[] {
 }
 
 function buildToyPrompt(
-  mechanisms: string[],
-  strict: boolean,
   generationLength: GenerationLength,
   mode: GenerationMode,
 ): string {
   return `${RUNTIME_INSTRUCTION}\n\n${buildRuntimePrompt(
     DEFAULT_MOOD,
-    mechanisms,
-    strict,
+    false,
     generationLength,
     mode,
   )}`;
@@ -339,23 +376,27 @@ function acceptCompletion(
   return validateGeneratedText(text, topic, DEFAULT_MOOD, generationLength, mode) ? null : text;
 }
 
+interface GeneratedResult {
+  text: string;
+  /** Winning mechanism name, or null when no model result survived (fallback). */
+  mechanism: string | null;
+}
+
 async function generateWithProvider(
   provider: ProviderConfig,
   topic: string,
   generationLength: GenerationLength,
   mode: GenerationMode,
-): Promise<string | null> {
-  const draw = drawMechanismSets(DEFAULT_MOOD);
+): Promise<GeneratedResult | null> {
   const candidateParams = CANDIDATE_PARAMS[mode];
-  const candidateMechanisms = draw.candidates.slice(0, candidateParams.length);
   const settled = await Promise.allSettled(
-    candidateMechanisms.map((mechanisms, index) =>
+    candidateParams.map((params, index) =>
       requestCompletion(
         provider,
-        buildToyPrompt(mechanisms, false, generationLength, mode),
+        buildToyPrompt(generationLength, mode),
         topic,
         mode,
-        candidateParams[index],
+        params,
       ),
     ),
   );
@@ -369,7 +410,6 @@ async function generateWithProvider(
     }
   });
 
-  const historyKey = `${mode}：${topic}`;
   const valid: Array<{
     text: string;
     score: number;
@@ -382,14 +422,16 @@ async function generateWithProvider(
     if (result.status !== "fulfilled") return;
     const text = acceptCompletion(result.value, topic, generationLength, mode);
     if (!text) return;
-    const similarity = recentSimilarity(historyKey, DEFAULT_MOOD, text);
+    // The bare topic (not the mode-prefixed history key) is what the exemplar
+    // exclusion in recentSimilarity matches against — a prefixed key would let
+    // the model's verbatim exemplar plagiarism through as a "repeat" and force
+    // the fallback for showcase topics.
+    const similarity = recentSimilarity(topic, DEFAULT_MOOD, text);
     if (similarity > 0.5) return;
     const { score, topicHit, length } = scoreGeneratedText(
       text,
       topic,
-      DEFAULT_MOOD,
       similarity,
-      candidateMechanisms[index],
       generationLength,
       mode,
     );
@@ -402,8 +444,8 @@ async function generateWithProvider(
   const text = valid[0]?.text;
 
   if (!text || isUnsafeGeneratedText(text)) return null;
-  rememberResult(historyKey, DEFAULT_MOOD, text);
-  return text;
+  rememberResult(topic, DEFAULT_MOOD, text);
+  return { text, mechanism: null };
 }
 
 async function generateWithProviders(
@@ -411,19 +453,29 @@ async function generateWithProviders(
   topic: string,
   generationLength: GenerationLength,
   mode: GenerationMode,
-): Promise<string> {
+): Promise<GeneratedResult> {
   for (const provider of providers) {
-    const text = await generateWithProvider(provider, topic, generationLength, mode);
-    if (text) return text;
+    const result = await generateWithProvider(
+      provider,
+      topic,
+      generationLength,
+      mode,
+    );
+    if (result) return result;
     console.warn(`${provider.name} produced no quality-approved result; trying next provider`);
   }
 
   const fallback = fallbackForLength(topic, DEFAULT_MOOD, generationLength, mode);
-  return isUnsafeGeneratedText(fallback) ? safeFallbackForLength(generationLength) : fallback;
+  const text = isUnsafeGeneratedText(fallback) ? safeFallbackForLength(generationLength) : fallback;
+  return { text, mechanism: "兜底" };
 }
 
 export class RateLimiter {
-  constructor(private readonly state: DurableObjectState) {}
+  private readonly state: DurableObjectState;
+
+  constructor(state: DurableObjectState) {
+    this.state = state;
+  }
 
   async fetch(): Promise<Response> {
     const now = Date.now();
@@ -444,6 +496,18 @@ export class RateLimiter {
     await this.state.storage.put("rate-limit", record);
     return new Response(null, { status: 204 });
   }
+}
+
+/** Proxy a sentence-board request into the SentenceStore DurableObject. The
+ * sentence store is best-effort flavor too — a failure returns null-ish
+ * responses, never a hard error that blocks generation. */
+async function sentenceStoreFetch(
+  env: Env,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const id = env.SENTENCE_STORE.idFromName("global");
+  return env.SENTENCE_STORE.get(id).fetch(`https://relay-sentences${path}`, init);
 }
 
 const worker = {
@@ -477,7 +541,77 @@ const worker = {
       });
     }
 
-    if (request.method !== "POST" || url.pathname !== "/generate") {
+    if (request.method === "GET" && url.pathname === "/sentences/leaderboard") {
+      const window = url.searchParams.get("window") ?? "day";
+      const limit = url.searchParams.get("limit") ?? "50";
+      try {
+        const response = await sentenceStoreFetch(
+          env,
+          `/leaderboard?window=${encodeURIComponent(window)}&limit=${encodeURIComponent(limit)}`,
+        );
+        const data = (await response.json().catch(() => null)) as
+          { rows?: unknown } | null;
+        return jsonResponse(request, env, { rows: data?.rows ?? [] });
+      } catch {
+        // The sentence board is optional flavor — never fail hard.
+        return jsonResponse(request, env, { rows: [] });
+      }
+    }
+
+    if (request.method !== "POST") {
+      return jsonResponse(request, env, { error: "not_found" }, 404);
+    }
+
+    if (url.pathname === "/feedback") {
+      const payload = await readSmallJsonPayload(request);
+      const mechanism = typeof payload?.mechanism === "string" ? payload.mechanism.trim() : "";
+      const vote = payload?.vote === 1 ? 1 : payload?.vote === -1 ? -1 : 0;
+      if (!mechanism || vote === 0) {
+        return jsonResponse(request, env, { error: "invalid_vote" }, 400);
+      }
+
+      // Same per-IP budget as generation — a throttled client can't spam votes.
+      const clientIp = request.headers.get("CF-Connecting-IP") ?? "anonymous";
+      const limiterId = env.RATE_LIMITER.idFromName(clientIp);
+      const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://relay-rate-limit/check");
+      if (!limiterResponse.ok) return withCors(request, limiterResponse, env);
+
+      const voteId = env.VOTE_STORE.idFromName("global");
+      const recordResponse = await env.VOTE_STORE.get(voteId).fetch("https://relay-votes/record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mechanism, vote }),
+      });
+      if (!recordResponse.ok) {
+        return jsonResponse(request, env, { error: "vote_store_unavailable" }, 502);
+      }
+      return jsonResponse(request, env, { ok: true });
+    }
+
+    if (url.pathname === "/sentences" || url.pathname === "/sentences/rate") {
+      const payload = await readSmallJsonPayload(request);
+      const clientIp = request.headers.get("CF-Connecting-IP") ?? "anonymous";
+      const limiterId = env.RATE_LIMITER.idFromName(clientIp);
+      const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://relay-rate-limit/check");
+      if (!limiterResponse.ok) return withCors(request, limiterResponse, env);
+
+      const path = url.pathname === "/sentences" ? "/submit" : "/rate";
+      const response = await sentenceStoreFetch(env, path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload ?? {}),
+      });
+      const data = (await response.json().catch(() => null)) as
+        Record<string, unknown> | null;
+      return jsonResponse(
+        request,
+        env,
+        data ?? { error: "sentence_store_unavailable" },
+        response.ok ? 200 : (response.status || 502),
+      );
+    }
+
+    if (url.pathname !== "/generate") {
       return jsonResponse(request, env, { error: "not_found" }, 404);
     }
 
@@ -501,8 +635,13 @@ const worker = {
     const generationLength = normalizeGenerationLength(payload?.length);
 
     try {
-      const text = await generateWithProviders(providers, topic, generationLength, mode);
-      return jsonResponse(request, env, { text });
+      const { text, mechanism } = await generateWithProviders(
+        providers,
+        topic,
+        generationLength,
+        mode,
+      );
+      return jsonResponse(request, env, { text, mechanism });
     } catch (error) {
       console.warn("toy relay failed", error instanceof Error ? error.message : "unknown");
       return jsonResponse(request, env, { error: "upstream_unavailable" }, 502);

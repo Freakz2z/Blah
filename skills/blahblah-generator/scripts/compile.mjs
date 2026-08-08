@@ -23,7 +23,6 @@ const requiredMaps = [
   "compactMentalStates",
   "lengths",
   "mechanisms",
-  "mechanismPools",
 ];
 const requiredArrays = ["runtimeInstruction", "common", "qualityGate"];
 for (const key of requiredArrays) {
