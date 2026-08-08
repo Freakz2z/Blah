@@ -1,6 +1,20 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  ACHIEVEMENTS,
+  achievementForValue,
+  achievementProgress,
+  newlyUnlockedAchievement,
+  nextAchievementForValue,
+  type Achievement,
+} from "./achievements";
 import {
   HISTORY_LIMIT,
   mergeHistory,
@@ -15,21 +29,15 @@ import {
   type LeaderboardPeriod,
   type LeaderboardSnapshot,
 } from "./leaderboard";
-import {
-  fetchSentenceBoard,
-  rateSentence,
-  submitSentence,
-  type SentenceRow,
-} from "./sentences";
 import { fetchUserProfile, type ToyUserProfile } from "./profile";
 import {
-  loadCountCloud,
+  loadNonsenseValueCloud,
   loadThemeCloud,
-  readCountLocal,
+  readNonsenseValueLocal,
   readThemeLocal,
-  saveCountCloud,
+  saveNonsenseValueCloud,
   saveThemeCloud,
-  writeCountLocal,
+  writeNonsenseValueLocal,
   writeThemeLocal,
   type ThemePreference,
 } from "./preferences";
@@ -51,9 +59,8 @@ const THINKING_STEPS: Record<(typeof MODES)[number], string[]> = {
   自由: ["正在收集灵感", "正在放飞联想", "正在整理荒诞", "灵感有点烫，正在吹凉"],
 };
 const MAX_CHARS = MAX_TOPIC_LENGTH;
-const LEADERBOARD_SUBMIT_INTERVAL_MS = 10_000;
 
-type UsageStats = { generations: number };
+type UsageStats = { nonsenseValue: number };
 
 type BlahBlahRuntimeWindow = Window & {
   __BLAHBLAH_TOY_RELAY_URL__?: string;
@@ -103,12 +110,11 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<"home" | "rank" | "mine">("home");
   /** Whether the composer's mode/length options are expanded. */
   const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Which side the mode label slides in from after a swipe/arrow change. */
-  const [modeEnterFrom, setModeEnterFrom] = useState<"left" | "right" | null>(null);
   /** Whether the 游戏说明 modal is open. */
   const [helpOpen, setHelpOpen] = useState(false);
   /** Whether the 更新日志 modal is open. */
   const [changelogOpen, setChangelogOpen] = useState(false);
+  const [achievementToast, setAchievementToast] = useState<Achievement | null>(null);
   const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
   const [stats, setStats] = useState<UsageStats | null>(null);
@@ -117,24 +123,9 @@ export default function Home() {
   const [leaderboardState, setLeaderboardState] = useState<
     "idle" | "loading" | "ready" | "failed" | "unsupported"
   >("idle");
-  const [boardType, setBoardType] = useState<"count" | "quality">("count");
   const [period, setPeriod] = useState<LeaderboardPeriod>("week");
-  const [sentenceBoard, setSentenceBoard] = useState<SentenceRow[] | null>(null);
-  const [sentenceBoardState, setSentenceBoardState] = useState<
-    "idle" | "loading" | "ready" | "failed"
-  >("idle");
-  const [submitState, setSubmitState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
-  const [ratedIds, setRatedIds] = useState<Set<string>>(new Set());
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const modeLabelRef = useRef<HTMLSpanElement>(null);
-  /** Horizontal swipe tracking on the mode label: start point, delta, and
-   * whether a swipe (not a tap) actually happened — a swipe must not also
-   * trigger the click that expands the length options. */
-  const swipeStartXRef = useRef<number | null>(null);
-  const swipeStartYRef = useRef<number | null>(null);
-  const swipeDeltaRef = useRef(0);
-  const swipedRef = useRef(false);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const helpCloseRef = useRef<HTMLButtonElement>(null);
   const changelogButtonRef = useRef<HTMLButtonElement>(null);
@@ -145,50 +136,54 @@ export default function Home() {
   const changelogWasOpenRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const copyTimerRef = useRef<number | null>(null);
-  const submitTimerRef = useRef<number | null>(null);
   /** How many `h-N` slots the cloud currently holds, so shrinking history can
    * trim the orphaned keys. */
   const cloudHistorySlotsRef = useRef(0);
   /** Serializes cloud writes so overlapping history changes can't interleave a
    * stale snapshot over a newer one. */
   const cloudPersistQueueRef = useRef<Promise<unknown>>(Promise.resolve());
-  /** Coarse throttle for the count-board report. */
-  const lastLeaderboardSubmitRef = useRef(0);
   /** Lets a stale refresh know it has been superseded. */
   const leaderboardSeqRef = useRef(0);
-  /** Lets a stale quality-board refresh know it has been superseded. */
-  const sentenceBoardSeqRef = useRef(0);
   useEffect(() => {
-    const timer = window.setTimeout(() => setStats({ generations: readCountLocal() }), 0);
+    const timer = window.setTimeout(
+      () => setStats({ nonsenseValue: readNonsenseValueLocal() }),
+      0,
+    );
     return () => window.clearTimeout(timer);
   }, []);
 
-  /* Cross-device sync: the cloud (per-user) values win over the local cache
-     when they differ — the theme and the generation count follow the login. */
+  /* Cross-device sync: merge the local cache and Toy KV by maximum value. The
+     old gen-count KV is read inside loadNonsenseValueCloud for migration. */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [cloudTheme, cloudCount] = await Promise.all([
+      const [cloudTheme, cloudValue] = await Promise.all([
         loadThemeCloud(),
-        loadCountCloud(),
+        loadNonsenseValueCloud(),
       ]);
       if (cancelled) return;
       if (cloudTheme) {
         setTheme(cloudTheme);
         writeThemeLocal(cloudTheme);
       }
-      if (cloudCount !== null) {
-        const local = readCountLocal();
-        if (cloudCount > local) {
-          writeCountLocal(cloudCount);
-          setStats({ generations: cloudCount });
-        }
+      const localValue = readNonsenseValueLocal();
+      const mergedValue = Math.max(localValue, cloudValue ?? 0);
+      writeNonsenseValueLocal(mergedValue);
+      setStats({ nonsenseValue: mergedValue });
+      if (cloudValue !== mergedValue) {
+        void saveNonsenseValueCloud(mergedValue);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [profile]);
+
+  useEffect(() => {
+    if (!achievementToast) return;
+    const timer = window.setTimeout(() => setAchievementToast(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [achievementToast]);
 
   /* Best-effort login detection: reuses an existing profile consent without a
      gesture; the first-time consent dialog is requested when 我的 opens. */
@@ -244,11 +239,10 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [status, mode]);
 
-  /* feedback timer cleanup */
+  /* copy feedback timer cleanup */
   useEffect(
     () => () => {
       if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
-      if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
     },
     [],
   );
@@ -300,6 +294,18 @@ export default function Home() {
   }, [helpOpen, changelogOpen]);
 
   /* ── Generate ────────────────────────────────── */
+  /** Auto-grow the topic textarea with content: 1 line → 1-line height, up to
+   * 4 lines, then it scrolls inside the box (CSS caps max-height). */
+  const resizeTopicInput = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "home") resizeTopicInput();
+  }, [activeTab, topic, resizeTopicInput]);
   const generate = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
@@ -380,17 +386,17 @@ export default function Home() {
         };
         if (generatedMechanism) historyItem.mechanism = generatedMechanism;
         setHistory((items) => prependHistory(items, historyItem));
-        const nextCount = readCountLocal() + 1;
-        writeCountLocal(nextCount);
-        setStats({ generations: nextCount });
-        void saveCountCloud(nextCount);
-        // Best-effort week-leaderboard report, coarsely throttled; never
-        // blocks the result shown.
-        const now = Date.now();
-        if (now - lastLeaderboardSubmitRef.current >= LEADERBOARD_SUBMIT_INTERVAL_MS) {
-          lastLeaderboardSubmitRef.current = now;
-          void submitLeaderboardScore(nextCount);
-        }
+        const previousValue = readNonsenseValueLocal();
+        const nextValue = previousValue + 1;
+        writeNonsenseValueLocal(nextValue);
+        setStats({ nonsenseValue: nextValue });
+        void saveNonsenseValueCloud(nextValue);
+        const unlockedAchievement = newlyUnlockedAchievement(previousValue, nextValue);
+        if (unlockedAchievement) setAchievementToast(unlockedAchievement);
+        // Report every successful generation so a user who stops after this
+        // result is not left one or more points behind. It remains best-effort
+        // and never blocks the result shown.
+        void submitLeaderboardScore(nextValue);
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus("error");
@@ -417,7 +423,7 @@ export default function Home() {
     [topic, mode, generationLength, status],
   );
 
-  /* ── Mode switching (swipe / arrow keys) ─────── */
+  /* ── Mode switching ───────────────────────────── */
   const changeMode = useCallback((nextMode: (typeof MODES)[number]) => {
     setMode(nextMode);
     setResult("");
@@ -426,18 +432,6 @@ export default function Home() {
     setMessage("");
     setSettingsOpen(false);
   }, []);
-
-  /** Cycle the mode by one step. `direction` 1 = next (翻译→回答→自由),
-   * -1 = previous. The label slides in from the side the motion came from. */
-  const cycleMode = useCallback(
-    (direction: 1 | -1) => {
-      const index = MODES.indexOf(mode);
-      const next = MODES[(index + direction + MODES.length) % MODES.length];
-      setModeEnterFrom(direction === 1 ? "right" : "left");
-      changeMode(next);
-    },
-    [mode, changeMode],
-  );
 
   const restoreHistory = useCallback((item: GenerationHistoryItem) => {
     abortRef.current?.abort();
@@ -462,7 +456,7 @@ export default function Home() {
     setHistory([]);
   }, []);
 
-  /* ── Leaderboard — week board of "共生成" counts via the Toy SDK ── */
+  /* ── 胡言乱语榜 — canonical 胡言乱语值 via Toy SDK board 1 ── */
   const refreshLeaderboard = useCallback(async () => {
     const seq = ++leaderboardSeqRef.current;
     if (typeof window === "undefined" || !window.toy) {
@@ -483,59 +477,11 @@ export default function Home() {
     setLeaderboardState("ready");
   }, [period]);
 
-  const refreshSentenceBoard = useCallback(async () => {
-    const seq = ++sentenceBoardSeqRef.current;
-    setSentenceBoardState("loading");
-    const rows = await fetchSentenceBoard(period, toyRelayUrl());
-    if (seq !== sentenceBoardSeqRef.current) return; // superseded
-    if (!rows) {
-      setSentenceBoardState("failed");
-      setSentenceBoard(null);
-      return;
-    }
-    setSentenceBoard(rows);
-    setSentenceBoardState("ready");
-  }, [period]);
-
-  /* Fetch the active board when the 排行 tab opens or its board/period
-     changes. Deps deliberately exclude the board state — including it would
-     re-trigger this effect on every state change and loop. */
+  /* Fetch the board when the 排行 tab opens or its period changes. */
   useEffect(() => {
     if (activeTab !== "rank") return;
-    if (boardType === "count") {
-      void refreshLeaderboard();
-    } else {
-      void refreshSentenceBoard();
-    }
-  }, [activeTab, boardType, period, refreshLeaderboard, refreshSentenceBoard]);
-
-  /* 投上榜 — submit a history item's text to the 胡言乱语排行榜 (login only). */
-  const submitToBoard = useCallback(
-    async (text: string) => {
-      const relay = toyRelayUrl();
-      if (!relay || !profile || !text || submitState === "sending") return;
-      setSubmitState("sending");
-      const ok = await submitSentence(text, profile, relay);
-      setSubmitState(ok ? "sent" : "failed");
-      if (ok && activeTab === "rank" && boardType === "quality") void refreshSentenceBoard();
-      if (submitTimerRef.current) window.clearTimeout(submitTimerRef.current);
-      submitTimerRef.current = window.setTimeout(() => setSubmitState("idle"), 2400);
-    },
-    [profile, submitState, activeTab, boardType, refreshSentenceBoard],
-  );
-
-  const handleRate = useCallback(
-    async (id: string, rating: number) => {
-      const relay = toyRelayUrl();
-      if (!relay || !profile) return;
-      const ok = await rateSentence(id, rating, relay);
-      if (ok) {
-        setRatedIds((set) => new Set(set).add(id));
-        void refreshSentenceBoard();
-      }
-    },
-    [profile, refreshSentenceBoard],
-  );
+    void refreshLeaderboard();
+  }, [activeTab, refreshLeaderboard]);
 
   /* ── Copy — clipboard API with execCommand fallback ── */
   const copyResult = useCallback(async () => {
@@ -567,6 +513,11 @@ export default function Home() {
   /* ── Derived state ───────────────────────────── */
   const isOverLimit = topic.length > MAX_CHARS;
   const hasResult = result !== "";
+  const nonsenseValue = stats?.nonsenseValue ?? 0;
+  const currentAchievement = achievementForValue(nonsenseValue);
+  const nextAchievement = nextAchievementForValue(nonsenseValue);
+  const displayedAchievement = currentAchievement ?? ACHIEVEMENTS[0];
+  const progress = achievementProgress(nonsenseValue);
 
   /* ── Render ──────────────────────────────────── */
   return (
@@ -680,68 +631,20 @@ export default function Home() {
             <button
               type="button"
               className="composer-settings"
-              onClick={() => {
-                // A swipe must not also expand the length options.
-                if (swipedRef.current) {
-                  swipedRef.current = false;
-                  return;
-                }
-                setSettingsOpen((open) => !open);
-              }}
-              onPointerDown={(event) => {
-                swipeStartXRef.current = event.clientX;
-                swipeStartYRef.current = event.clientY;
-                swipeDeltaRef.current = 0;
-                swipedRef.current = false;
-                event.currentTarget.setPointerCapture?.(event.pointerId);
-              }}
-              onPointerMove={(event) => {
-                if (swipeStartXRef.current === null) return;
-                const dx = event.clientX - swipeStartXRef.current;
-                const dy = event.clientY - (swipeStartYRef.current ?? 0);
-                // Only claim horizontal drags; leave vertical scroll alone.
-                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
-                  swipedRef.current = true;
-                  swipeDeltaRef.current = dx;
-                  if (modeLabelRef.current) {
-                    modeLabelRef.current.style.transform = `translateX(${dx * 0.35}px)`;
-                  }
-                }
-              }}
-              onPointerUp={() => {
-                const dx = swipeDeltaRef.current;
-                if (modeLabelRef.current) modeLabelRef.current.style.transform = "";
-                swipeStartXRef.current = null;
-                swipeStartYRef.current = null;
-                swipeDeltaRef.current = 0;
-                if (Math.abs(dx) > 30) cycleMode(dx < 0 ? 1 : -1);
-                // The click fires right after pointerup; keep swipedRef true for
-                // it so a drag doesn't also expand the options, then clear it
-                // so the next tap works even if the browser suppressed the click.
-                window.setTimeout(() => {
-                  swipedRef.current = false;
-                }, 0);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "ArrowRight") {
-                  event.preventDefault();
-                  cycleMode(1);
-                } else if (event.key === "ArrowLeft") {
-                  event.preventDefault();
-                  cycleMode(-1);
-                }
-              }}
+              onClick={() => setSettingsOpen((open) => !open)}
               aria-expanded={settingsOpen}
               aria-controls="composer-options"
-              aria-label={`模式 ${mode}，左右滑动或方向键切换`}
+              aria-label={`模式 ${mode}，点击切换`}
             >
-              <span
-                ref={modeLabelRef}
-                key={mode}
-                className={`composer-settings-label${modeEnterFrom ? ` enter-${modeEnterFrom}` : ""}`}
-                onAnimationEnd={() => setModeEnterFrom(null)}
-              >
-                {mode} · {generationLength}
+              <span className="composer-settings-label">
+                {mode}
+                <span
+                  className={`composer-settings-arrow${settingsOpen ? " open" : ""}`}
+                  aria-hidden="true"
+                >
+                  ▾
+                </span>
+                {generationLength}
               </span>
             </button>
 
@@ -870,26 +773,7 @@ export default function Home() {
 
           {activeTab === "rank" && (
             <section className="tab-page" aria-label="排行">
-              <div className="board-switch" role="radiogroup" aria-label="排行榜类型">
-                <button
-                  type="button"
-                  role="radio"
-                  className={`board-option${boardType === "count" ? " active" : ""}`}
-                  aria-checked={boardType === "count"}
-                  onClick={() => setBoardType("count")}
-                >
-                  生成数量
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  className={`board-option${boardType === "quality" ? " active" : ""}`}
-                  aria-checked={boardType === "quality"}
-                  onClick={() => setBoardType("quality")}
-                >
-                  胡言乱语
-                </button>
-              </div>
+              <h2 className="tab-page-title">胡言乱语榜</h2>
 
               <div className="period-switch" role="radiogroup" aria-label="统计周期">
                 {LEADERBOARD_PERIODS.map((entry) => (
@@ -906,104 +790,50 @@ export default function Home() {
                 ))}
               </div>
 
-              {boardType === "count" && (
-                <>
-                  {leaderboardState === "loading" && (
-                    <p className="leaderboard-empty">榜单加载中…</p>
-                  )}
-                  {leaderboardState === "failed" && (
-                    <p className="leaderboard-empty">榜单暂时不可用，请稍后再试。</p>
-                  )}
-                  {leaderboardState === "unsupported" && (
-                    <p className="leaderboard-empty">当前环境暂不支持生成数量榜。</p>
-                  )}
-                  {leaderboardState === "ready" && leaderboard && (
-                    <>
-                      {leaderboard.list.length === 0 ? (
-                        <p className="leaderboard-empty">这个周期还没有人上榜，来做第一个。</p>
-                      ) : (
-                        <ol className="leaderboard-list">
-                          {leaderboard.list.map((row) => (
-                            <li key={row.rank} className="leaderboard-row">
-                              <span
-                                className={`leaderboard-rank${
-                                  row.rank <= 3 ? ` top-${row.rank}` : ""
-                                }`}
-                              >
-                                {row.rank}
-                              </span>
-                              <img
-                                className="leaderboard-avatar"
-                                src={row.avatar}
-                                alt=""
-                                loading="lazy"
-                                referrerPolicy="no-referrer"
-                              />
-                              <span className="leaderboard-name">{row.nickname}</span>
-                              <span className="leaderboard-score">{formatStat(row.score)} 句</span>
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                      <p className="leaderboard-mine" role="status">
-                        {!profile
-                          ? "登录后可参与生成数量榜。"
-                          : leaderboard.mine?.ranked
-                            ? `我的排名：#${leaderboard.mine.rank} · ${formatStat(leaderboard.mine.score)} 句`
-                            : "我还没上榜，多生成几句试试。"}
-                      </p>
-                    </>
-                  )}
-                </>
+              {leaderboardState === "loading" && (
+                <p className="leaderboard-empty">榜单加载中…</p>
               )}
-
-              {boardType === "quality" && (
+              {leaderboardState === "failed" && (
+                <p className="leaderboard-empty">榜单暂时不可用，请稍后再试。</p>
+              )}
+              {leaderboardState === "unsupported" && (
+                <p className="leaderboard-empty">当前环境暂不支持胡言乱语榜。</p>
+              )}
+              {leaderboardState === "ready" && leaderboard && (
                 <>
-                  {sentenceBoardState === "loading" && (
-                    <p className="leaderboard-empty">榜单加载中…</p>
+                  {leaderboard.list.length === 0 ? (
+                    <p className="leaderboard-empty">这个周期还没有人上榜，来做第一个。</p>
+                  ) : (
+                    <ol className="leaderboard-list">
+                      {leaderboard.list.map((row) => (
+                        <li key={row.rank} className="leaderboard-row">
+                          <span
+                            className={`leaderboard-rank${
+                              row.rank <= 3 ? ` top-${row.rank}` : ""
+                            }`}
+                          >
+                            {row.rank}
+                          </span>
+                          <img
+                            className="leaderboard-avatar"
+                            src={row.avatar}
+                            alt=""
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                          />
+                          <span className="leaderboard-name">{row.nickname}</span>
+                          <span className="leaderboard-score">{formatStat(row.score)} 点</span>
+                        </li>
+                      ))}
+                    </ol>
                   )}
-                  {sentenceBoardState === "failed" && (
-                    <p className="leaderboard-empty">榜单暂时不可用，请稍后再试。</p>
-                  )}
-                  {sentenceBoardState === "ready" && sentenceBoard && (
-                    sentenceBoard.length === 0 ? (
-                      <p className="leaderboard-empty">这个周期还没有句子上榜，去生成一句吧。</p>
-                    ) : (
-                      <ol className="sentence-board-list">
-                        {sentenceBoard.map((row, index) => (
-                          <li key={row.id} className="sentence-board-item">
-                            <span className="sentence-board-rank">{index + 1}</span>
-                            <div className="sentence-board-body">
-                              <p className="sentence-board-text">{row.text}</p>
-                              <div className="sentence-board-meta">
-                                <span className="sentence-board-author">{row.nickname}</span>
-                                <span className="sentence-board-rating">
-                                  {row.rating.toFixed(1)} 分 · {row.votes} 票
-                                </span>
-                              </div>
-                              {profile && !ratedIds.has(row.id) && (
-                                <div
-                                  className="sentence-board-rate"
-                                  role="group"
-                                  aria-label={`给「${row.text}」评分`}
-                                >
-                                  {[1, 2, 3, 4, 5].map((score) => (
-                                    <button
-                                      key={score}
-                                      type="button"
-                                      onClick={() => void handleRate(row.id, score)}
-                                    >
-                                      {score}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </li>
-                        ))}
-                      </ol>
-                    )
-                  )}
+                  <p className="leaderboard-mine" role="status">
+                    {!profile
+                      ? "登录后可参与胡言乱语榜。"
+                      : leaderboard.mine?.ranked
+                        ? `我的排名：#${leaderboard.mine.rank} · ${formatStat(leaderboard.mine.score)} 点`
+                        : "我还没上榜，多积累一些胡言乱语值试试。"}
+                  </p>
                 </>
               )}
             </section>
@@ -1025,10 +855,10 @@ export default function Home() {
                 <div className="profile-meta">
                   <span className="profile-name">{profile ? profile.nickname : "未登录"}</span>
                   <span className="profile-count">
-                    共生成 {stats ? formatStat(stats.generations) : "—"} 句
+                    胡言乱语值 {stats ? formatStat(stats.nonsenseValue) : "—"}
                   </span>
                   <span className="profile-note">
-                    {profile ? "已登录" : "登录后可参与排行榜和同步历史记录"}
+                    {profile ? "已同步到 Toy KV" : "登录后同步排行榜、成就与历史记录"}
                   </span>
                 </div>
                 {!profile && (
@@ -1041,6 +871,71 @@ export default function Home() {
                   </button>
                 )}
               </div>
+
+              <section className="achievement-section" aria-labelledby="achievement-title">
+                <div className="achievement-section-header">
+                  <h3 id="achievement-title" className="micro-label">成就勋章</h3>
+                  <span className="achievement-value">{formatStat(nonsenseValue)} 点</span>
+                </div>
+
+                <div className="achievement-current">
+                  <img
+                    className={`achievement-badge achievement-badge-large${currentAchievement ? "" : " locked"}`}
+                    src={displayedAchievement.imageUrl}
+                    alt={`${displayedAchievement.title}${currentAchievement ? "，已获得" : "，尚未获得"}`}
+                  />
+                  <div className="achievement-current-copy">
+                    <span className="achievement-current-kicker">
+                      {currentAchievement ? "当前成就" : "第一枚勋章"}
+                    </span>
+                    <strong>{displayedAchievement.title}</strong>
+                    <p>{displayedAchievement.description}</p>
+                    <div
+                      className="achievement-progress"
+                      role="progressbar"
+                      aria-label={nextAchievement ? `距离${nextAchievement.title}的进度` : "成就完成进度"}
+                      aria-valuemin={0}
+                      aria-valuemax={(nextAchievement?.requiredValue ?? nonsenseValue) || 1}
+                      aria-valuenow={Math.min(
+                        nonsenseValue,
+                        nextAchievement?.requiredValue ?? nonsenseValue,
+                      )}
+                    >
+                      <span style={{ transform: `scaleX(${progress})` }} />
+                    </div>
+                    <span className="achievement-next-copy">
+                      {nextAchievement
+                        ? `再获得 ${nextAchievement.requiredValue - nonsenseValue} 点，解锁「${nextAchievement.title}」`
+                        : "全部成就已获得"}
+                    </span>
+                  </div>
+                </div>
+
+                <ul className="achievement-grid" aria-label="全部成就">
+                  {ACHIEVEMENTS.map((achievement) => {
+                    const unlocked = nonsenseValue >= achievement.requiredValue;
+                    return (
+                      <li
+                        key={achievement.id}
+                        className={`achievement-card${unlocked ? " unlocked" : " locked"}`}
+                        aria-label={`${achievement.title}，${unlocked ? "已获得" : `需要 ${achievement.requiredValue} 点`}`}
+                      >
+                        <img
+                          className="achievement-badge"
+                          src={achievement.imageUrl}
+                          alt=""
+                          loading="lazy"
+                        />
+                        <div className="achievement-card-copy">
+                          <strong>{achievement.title}</strong>
+                          <span>{achievement.requiredValue} 点</span>
+                          <p>{achievement.description}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
 
               <fieldset className="setting-block theme-block">
                 <legend className="micro-label">主题设置</legend>
@@ -1118,19 +1013,6 @@ export default function Home() {
                         </button>
                         <button
                           type="button"
-                          className="history-item-board"
-                          disabled={submitState === "sending"}
-                          onClick={() => void submitToBoard(item.text)}
-                          aria-label={`投给胡言乱语榜：${item.text}`}
-                        >
-                          {submitState === "sending"
-                            ? "上榜中…"
-                            : submitState === "sent"
-                              ? "已投榜"
-                              : "投榜"}
-                        </button>
-                        <button
-                          type="button"
                           className="history-item-delete"
                           onClick={() => removeHistoryItem(item.id)}
                           aria-label={`删除 ${item.text}`}
@@ -1189,6 +1071,21 @@ export default function Home() {
           </button>
       </nav>
 
+      {achievementToast && (
+        <div className="achievement-toast" role="status" aria-live="polite">
+          <img
+            className="achievement-badge achievement-toast-badge"
+            src={achievementToast.imageUrl}
+            alt=""
+            aria-hidden="true"
+          />
+          <span>
+            <small>新成就已获得</small>
+            <strong>{achievementToast.title}</strong>
+          </span>
+        </div>
+      )}
+
       {/* ── 游戏说明 modal ──────────────────────── */}
       {helpOpen && (
         <div className="help-overlay" onClick={() => setHelpOpen(false)}>
@@ -1218,7 +1115,7 @@ export default function Home() {
                   <li>在输入框写一句话、一个问题或一个灵感。</li>
                   <li>点输入框上方的「翻译 · 正常」按钮，切换模式和长度。</li>
                   <li>点「开始生成」，得到一句胡言乱语。</li>
-                  <li>生成后可以复制，或投给胡言乱语榜。</li>
+                  <li>每次有效生成会增加 1 点胡言乱语值，并自动计入排行榜。</li>
                 </ol>
               </section>
               <section className="help-section">
@@ -1246,15 +1143,13 @@ export default function Home() {
               <section className="help-section">
                 <h3>排行榜</h3>
                 <dl>
-                  <dt>生成数量榜</dt>
-                  <dd>按生成句数排名，分 24 小时 / 7 天 / 30 天。</dd>
                   <dt>胡言乱语榜</dt>
-                  <dd>把句子投上去，让大家打 1–5 分，同样分三个周期。</dd>
+                  <dd>按胡言乱语值排名，提供总榜 / 月榜 / 周榜 / 日榜。</dd>
                 </dl>
               </section>
               <section className="help-section">
                 <h3>登录</h3>
-                <p>登录后可以参与排行榜、把句子投上榜，历史记录也会同步到云端。</p>
+                <p>登录后可以参与胡言乱语榜，历史记录也会同步到云端。</p>
               </section>
             </div>
           </div>

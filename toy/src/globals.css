@@ -111,16 +111,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 /* ── Composer — 单一输入区 + 下方「生成」按钮 ────── */
 .composer-block {
-  flex: 1; /* 占满空区：结果区下方到页面底部的空间都归输入区 */
-  min-height: 0;
+  margin-top: auto; /* 钉在底部：结果区在上方，中间留白自动分配 */
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 .composer {
-  flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -149,8 +146,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-size: 13px;
   font-weight: 600;
   letter-spacing: var(--ls-base);
-  /* 横向滑动交给 JS（模式切换），纵向滚动保留给浏览器 */
-  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
   transition: border-color 160ms ease, background-color 160ms ease;
@@ -168,23 +163,18 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   white-space: nowrap;
 }
 
-/* 模式切换的方向动画：滑动/方向键换模式时，新标签从滑动方向滑入 */
-.composer-settings-label.enter-right {
-  animation: mode-slide-in-right 220ms cubic-bezier(0.16, 1, 0.3, 1);
+/* 展开/收起箭头：收起朝下，展开旋转 180° 朝上 */
+.composer-settings-arrow {
+  display: inline-block;
+  margin: 0 6px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 200ms ease;
 }
 
-.composer-settings-label.enter-left {
-  animation: mode-slide-in-left 220ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes mode-slide-in-right {
-  from { opacity: 0; transform: translateX(22px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes mode-slide-in-left {
-  from { opacity: 0; transform: translateX(-22px); }
-  to   { opacity: 1; transform: translateX(0); }
+.composer-settings-arrow.open {
+  transform: rotate(180deg);
 }
 
 .composer-options {
@@ -226,6 +216,12 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   letter-spacing: var(--ls-base);
 }
 
+/* 分段之间的「｜」分隔线，模式与长度同款 */
+.composer-options .mode-option + .mode-option,
+.composer-options .length-option + .length-option {
+  border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+}
+
 .composer-options .mode-option span {
   font-size: 12px;
   font-weight: 600;
@@ -242,18 +238,14 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 /* 输入行：文本框 + 发送按钮并排 */
 .composer-input-row {
-  flex: 1;
-  min-height: 0;
   display: flex;
-  align-items: stretch;
+  align-items: flex-end;
   gap: 10px;
 }
 
 .composer-input-row .topic-input {
   flex: 1;
   min-width: 0;
-  /* 输入区占满 composer 剩余高度；内容超长时在框内滚动 */
-  max-height: none;
   border-bottom: none; /* composer 自带外框，去掉输入框下划线 */
 }
 
@@ -266,10 +258,11 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   width: 100%;
   height: 52px;
   padding: 0 24px;
+  /* 亮色模式：白底黑字；暗色模式：黑底白字（见下方覆盖） */
   border: 2px solid var(--fg);
   border-radius: 0;
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--bg);
+  color: var(--fg);
   font-family: var(--font-sans);
   font-size: 16px;
   font-weight: 700;
@@ -279,11 +272,27 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   flex-shrink: 0;
 }
 
+/* 暗色模式：黑底白字（固定值，不随主题反转），浅色细边保证可见 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .primary-button {
+    background: #171613;
+    color: #f9f8f6;
+    border-color: color-mix(in srgb, #ebe8e2 30%, transparent);
+  }
+}
+
+:root[data-theme="dark"] .primary-button {
+  background: #171613;
+  color: #f9f8f6;
+  border-color: color-mix(in srgb, #ebe8e2 30%, transparent);
+}
+
 .primary-button:focus-visible { outline-offset: 2px; }
 
 @media (hover: hover) {
   .primary-button:hover:not([aria-disabled="true"]) {
-    background: var(--fg);
+    /* 与全站按钮一致的 6% 淡染 + 强调色描边 */
+    background: color-mix(in srgb, var(--fg) 6%, var(--bg));
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
@@ -355,7 +364,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 .history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: stretch;
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   transition: border-color 160ms ease, background-color 160ms ease;
@@ -404,18 +413,6 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-size: 11px;
   line-height: 1.4;
 }
-
-.history-item-board {
-  width: 52px;
-  color: var(--fg-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: var(--ls-base);
-  transition: color 160ms ease;
-}
-
-.history-item-board:hover:not(:disabled) { color: var(--accent); }
-.history-item-board:disabled { cursor: wait; opacity: 0.5; }
 
 .history-item-delete {
   width: 38px;
@@ -501,17 +498,13 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   text-align: center;
 }
 
-/* ── Board switch + period (排行) ──────────────── */
-.board-switch,
+/* ── Period switch (排行) ─────────────────────── */
 .period-switch {
   display: grid;
+  grid-template-columns: repeat(4, 1fr);
   border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
 }
 
-.board-switch { grid-template-columns: repeat(2, 1fr); }
-.period-switch { grid-template-columns: repeat(3, 1fr); }
-
-.board-option,
 .period-option {
   min-height: 44px;
   color: var(--fg-muted);
@@ -521,102 +514,17 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   transition: color 160ms ease, background-color 160ms ease;
 }
 
-.board-option + .board-option,
 .period-option + .period-option {
   border-left: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
 }
 
-.board-option:hover,
 .period-option:hover,
-.board-option.active,
 .period-option.active {
   color: var(--fg);
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 
-.board-option:focus-visible,
 .period-option:focus-visible { outline-offset: -3px; }
-
-/* ── 胡言乱语榜 rows ──────────────────────────── */
-.sentence-board-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.sentence-board-item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-}
-
-.sentence-board-rank {
-  color: var(--fg-muted);
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.sentence-board-body {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.sentence-board-text {
-  margin: 0;
-  color: var(--fg);
-  font-family: var(--font-serif);
-  font-size: 16px;
-  line-height: 1.5;
-}
-
-.sentence-board-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--fg-muted);
-  font-size: 11px;
-  letter-spacing: var(--ls-base);
-}
-
-.sentence-board-author {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sentence-board-rating {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.sentence-board-rate {
-  display: flex;
-  gap: 6px;
-}
-
-.sentence-board-rate button {
-  flex: 1;
-  padding: 5px 0;
-  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  transition: color 200ms ease, border-color 200ms ease;
-}
-
-@media (hover: hover) {
-  .sentence-board-rate button:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-}
 
 /* ── Tab pages (排行 / 我的) ───────────────────── */
 .tab-page {
@@ -631,6 +539,7 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
   font-size: 20px;
   font-weight: 700;
   letter-spacing: var(--ls-wide);
+  text-align: center;
 }
 
 /* ── Bottom tab bar ────────────────────────────── */
@@ -748,6 +657,220 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 
 .profile-login-button:focus-visible { outline-offset: 2px; }
 
+/* ── 胡言乱语值与成就勋章 ─────────────────────── */
+.achievement-section {
+  display: grid;
+  gap: 12px;
+}
+
+.achievement-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.achievement-value {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--ls-base);
+}
+
+.achievement-current {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  background:
+    linear-gradient(135deg, var(--accent-soft), transparent 58%),
+    var(--bg);
+}
+
+.achievement-badge {
+  display: block;
+  width: 64px;
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  object-fit: contain;
+  box-shadow: 0 3px 12px rgba(23, 22, 19, 0.16);
+  transition: filter 220ms ease, opacity 220ms ease, transform 220ms ease;
+}
+
+.achievement-badge-large {
+  width: 96px;
+}
+
+.achievement-badge.locked,
+.achievement-card.locked .achievement-badge {
+  filter: grayscale(1) contrast(0.8);
+  opacity: 0.34;
+  box-shadow: none;
+}
+
+.achievement-current-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.achievement-current-kicker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--ls-wide);
+}
+
+.achievement-current-copy > strong {
+  margin-top: 1px;
+  font-family: var(--font-serif);
+  font-size: 19px;
+  line-height: 1.35;
+}
+
+.achievement-current-copy > p,
+.achievement-card-copy > p {
+  margin: 3px 0 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.achievement-progress {
+  height: 4px;
+  margin-top: 10px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.achievement-progress > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transition: transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.achievement-next-copy {
+  margin-top: 5px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.achievement-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 84px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.achievement-card .achievement-badge {
+  width: 56px;
+}
+
+.achievement-card.locked {
+  border-style: dashed;
+}
+
+.achievement-card-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.achievement-card-copy > strong {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.achievement-card-copy > span {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.achievement-card.locked .achievement-card-copy > span {
+  color: var(--fg-muted);
+}
+
+.achievement-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(76px + max(12px, env(safe-area-inset-bottom)));
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: min(calc(100% - 32px), 360px);
+  padding: 10px 14px 10px 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  background: var(--bg);
+  box-shadow: 0 14px 34px rgba(23, 22, 19, 0.2);
+  transform: translateX(-50%);
+  animation: achievement-toast-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.achievement-toast-badge {
+  width: 52px;
+}
+
+.achievement-toast > span:last-child {
+  display: grid;
+}
+
+.achievement-toast small {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--ls-wide);
+}
+
+.achievement-toast strong {
+  font-family: var(--font-serif);
+  font-size: 17px;
+}
+
+@keyframes achievement-toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (max-width: 360px) {
+  .achievement-current {
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .achievement-badge-large { width: 76px; }
+  .achievement-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement-toast { animation: none; }
+  .achievement-progress > span { transition: none; }
+}
+
 .setting-block {
   min-inline-size: 0;
   margin: 0;
@@ -829,8 +952,8 @@ button { cursor: pointer; background: none; border: none; padding: 0; }
 .topic-input {
   display: block;
   width: 100%;
-  /* 高度由 composer 的 flex 布局决定（占满空区）；这里只保证最小可用高度，
-     内容超长时在框内滚动，绝不横向拓展 */
+  /* 高度由 JS 跟随内容自适应：1 行 → 1 行高，最多 4 行（line-height 1.3），
+     再多就在容器内滚动，绝不横向拓展 */
   min-height: calc(1.3em + 16px);
   max-height: calc(5.2em + 16px);
   padding: 8px 0;

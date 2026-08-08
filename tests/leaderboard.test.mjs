@@ -50,7 +50,7 @@ test("fetchLeaderboard defaults to the week period", async () => {
 
 test("every advertised period is a real SDK period", () => {
   const values = LEADERBOARD_PERIODS.map((entry) => entry.value);
-  assert.deepEqual(values, ["day", "week", "month"]);
+  assert.deepEqual(values, ["all", "month", "week", "day"]);
 });
 
 test("fetchLeaderboard tolerates a failing getMyRank but keeps the list", async () => {

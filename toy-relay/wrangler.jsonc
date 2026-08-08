@@ -24,10 +24,6 @@
       {
         "name": "VOTE_STORE",
         "class_name": "VoteStore"
-      },
-      {
-        "name": "SENTENCE_STORE",
-        "class_name": "SentenceStore"
       }
     ]
   },
@@ -43,6 +39,10 @@
     {
       "tag": "sentence-store-v1",
       "new_sqlite_classes": ["SentenceStore"]
+    },
+    {
+      "tag": "sentence-store-v2-remove",
+      "deleted_classes": ["SentenceStore"]
     }
   ],
   "observability": {

@@ -8,6 +8,24 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    version: "v0.11",
+    date: "2026-08-08",
+    items: [
+      "新增胡言乱语值：每次有效生成增加 1 点",
+      "胡言乱语值同步到 Toy KV，并作为排行榜唯一分数",
+      "新增六级成就勋章、进度展示与解锁提示",
+    ],
+  },
+  {
+    version: "v0.10",
+    date: "2026-08-08",
+    items: [
+      "排行榜合并为唯一的「胡言乱语榜」",
+      "接入 Toy SDK 总榜 / 月榜 / 周榜 / 日榜",
+      "移除句子投榜与 1–5 分评分入口",
+    ],
+  },
+  {
     version: "v0.9",
     date: "2026-08-08",
     items: [

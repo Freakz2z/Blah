@@ -22,9 +22,8 @@ import {
 } from "../../shared/generate/validation.ts";
 import { fallbackForLength } from "../../shared/generate/fallback.ts";
 import { VoteStore } from "./vote-store.ts";
-import { SentenceStore } from "./sentence-store.ts";
 
-export { VoteStore, SentenceStore };
+export { VoteStore };
 
 const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
@@ -50,7 +49,6 @@ interface Env {
   DEEPSEEK_API_KEY?: string;
   RATE_LIMITER: DurableObjectNamespace;
   VOTE_STORE: DurableObjectNamespace;
-  SENTENCE_STORE: DurableObjectNamespace;
   TOY_ALLOWED_ORIGINS?: string;
   TOY_PROVIDER?: string;
 }
@@ -498,18 +496,6 @@ export class RateLimiter {
   }
 }
 
-/** Proxy a sentence-board request into the SentenceStore DurableObject. The
- * sentence store is best-effort flavor too — a failure returns null-ish
- * responses, never a hard error that blocks generation. */
-async function sentenceStoreFetch(
-  env: Env,
-  path: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const id = env.SENTENCE_STORE.idFromName("global");
-  return env.SENTENCE_STORE.get(id).fetch(`https://relay-sentences${path}`, init);
-}
-
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -541,23 +527,6 @@ const worker = {
       });
     }
 
-    if (request.method === "GET" && url.pathname === "/sentences/leaderboard") {
-      const window = url.searchParams.get("window") ?? "day";
-      const limit = url.searchParams.get("limit") ?? "50";
-      try {
-        const response = await sentenceStoreFetch(
-          env,
-          `/leaderboard?window=${encodeURIComponent(window)}&limit=${encodeURIComponent(limit)}`,
-        );
-        const data = (await response.json().catch(() => null)) as
-          { rows?: unknown } | null;
-        return jsonResponse(request, env, { rows: data?.rows ?? [] });
-      } catch {
-        // The sentence board is optional flavor — never fail hard.
-        return jsonResponse(request, env, { rows: [] });
-      }
-    }
-
     if (request.method !== "POST") {
       return jsonResponse(request, env, { error: "not_found" }, 404);
     }
@@ -586,29 +555,6 @@ const worker = {
         return jsonResponse(request, env, { error: "vote_store_unavailable" }, 502);
       }
       return jsonResponse(request, env, { ok: true });
-    }
-
-    if (url.pathname === "/sentences" || url.pathname === "/sentences/rate") {
-      const payload = await readSmallJsonPayload(request);
-      const clientIp = request.headers.get("CF-Connecting-IP") ?? "anonymous";
-      const limiterId = env.RATE_LIMITER.idFromName(clientIp);
-      const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://relay-rate-limit/check");
-      if (!limiterResponse.ok) return withCors(request, limiterResponse, env);
-
-      const path = url.pathname === "/sentences" ? "/submit" : "/rate";
-      const response = await sentenceStoreFetch(env, path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload ?? {}),
-      });
-      const data = (await response.json().catch(() => null)) as
-        Record<string, unknown> | null;
-      return jsonResponse(
-        request,
-        env,
-        data ?? { error: "sentence_store_unavailable" },
-        response.ok ? 200 : (response.status || 502),
-      );
     }
 
     if (url.pathname !== "/generate") {

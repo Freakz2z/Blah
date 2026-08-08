@@ -3,17 +3,19 @@
  * localStorage as a fast cache.
  *
  * The SDK cloud storage is isolated per (logged-in user, Toy) and follows the
- * login across devices — so the theme and the cumulative generation count
+ * login across devices — so the theme and the leaderboard's 胡言乱语值
  * sync across devices instead of living only in this browser's localStorage.
  * Every call degrades silently: no SDK, not logged in, or an API failure keeps
  * the localStorage cache as the source of truth.
  */
 
 export const THEME_KEY = "theme";
-export const COUNT_KEY = "gen-count";
+export const NONSENSE_VALUE_KEY = "nonsense-value-v1";
+export const LEGACY_COUNT_KEY = "gen-count";
 
 const THEME_LOCAL_KEY = "blahblah:theme:v1";
-const COUNT_LOCAL_KEY = "blahblah:toy-generation-count:v1";
+const NONSENSE_VALUE_LOCAL_KEY = "blahblah:nonsense-value:v1";
+const LEGACY_COUNT_LOCAL_KEY = "blahblah:toy-generation-count:v1";
 
 export type ThemePreference = "auto" | "light" | "dark";
 
@@ -81,47 +83,61 @@ export async function saveThemeCloud(
   }
 }
 
-/* ── Generation count ──────────────────────────── */
+/* ── 胡言乱语值（KV + 排行榜唯一分数）──────────── */
 
-export function readCountLocal(): number {
+function parseNonsenseValue(value: string | null | undefined): number | null {
+  if (value === null || value === undefined || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/** Read the canonical cache, falling back once to the old generation-count
+ * cache so existing users keep their progress. */
+export function readNonsenseValueLocal(): number {
   try {
-    const stored = Number(window.localStorage.getItem(COUNT_LOCAL_KEY) ?? "0");
-    return Number.isSafeInteger(stored) && stored >= 0 ? stored : 0;
+    const current = parseNonsenseValue(
+      window.localStorage.getItem(NONSENSE_VALUE_LOCAL_KEY),
+    );
+    if (current !== null) return current;
+    return parseNonsenseValue(window.localStorage.getItem(LEGACY_COUNT_LOCAL_KEY)) ?? 0;
   } catch {
     return 0;
   }
 }
 
-export function writeCountLocal(count: number): void {
+export function writeNonsenseValueLocal(value: number): void {
   try {
-    window.localStorage.setItem(COUNT_LOCAL_KEY, String(count));
+    window.localStorage.setItem(NONSENSE_VALUE_LOCAL_KEY, String(value));
   } catch {
-    // Private browsing must not block local generation.
+    // Private browsing must not block generation or achievements.
   }
 }
 
-/** Load the cloud count, or `null` when unavailable. */
-export async function loadCountCloud(
+/** Load the canonical KV value. When it does not exist yet, migrate from the
+ * old `gen-count` key without making the user start over. */
+export async function loadNonsenseValueCloud(
   sdk: ToyPrefsSdk | null = toySdk(),
 ): Promise<number | null> {
   if (!sdk) return null;
   try {
-    const record = await sdk.getCloudStorage([COUNT_KEY]);
-    const value = Number(record[COUNT_KEY]);
-    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const record = await sdk.getCloudStorage([NONSENSE_VALUE_KEY, LEGACY_COUNT_KEY]);
+    return (
+      parseNonsenseValue(record[NONSENSE_VALUE_KEY]) ??
+      parseNonsenseValue(record[LEGACY_COUNT_KEY])
+    );
   } catch {
     return null;
   }
 }
 
-/** Best-effort cloud write of the count. */
-export async function saveCountCloud(
-  count: number,
+/** Best-effort write of the leaderboard/achievement value to Toy KV. */
+export async function saveNonsenseValueCloud(
+  value: number,
   sdk: ToyPrefsSdk | null = toySdk(),
 ): Promise<void> {
   if (!sdk) return;
   try {
-    await sdk.setCloudStorage({ [COUNT_KEY]: String(count) });
+    await sdk.setCloudStorage({ [NONSENSE_VALUE_KEY]: String(value) });
   } catch {
     // Best-effort — the localStorage cache still holds the value.
   }

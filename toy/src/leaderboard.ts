@@ -1,25 +1,24 @@
 /**
- * "生成数量排行榜" backed by the Toy JS SDK's scoreboard (board 1).
+ * 「胡言乱语榜」由 Toy JS SDK 的数字排行榜（board 1）提供。
  *
- * The submitted score is this browser's cumulative local generation count;
- * the platform keeps only each user's highest score per board, so
- * re-submitting the growing count just raises it. The 24h / 7d / 30d views
- * are the SDK's own period filters (day / week / month). The SDK object is
- * injectable for tests; production defaults to `window.toy`. Every call
- * degrades silently — no SDK or not logged in must never block generation.
+ * 提交值是登录用户的胡言乱语值；每次有效生成加 1。平台会保留各周期内用户提交过的
+ * 最高分。总榜 / 月榜 / 周榜 / 日榜直接对应 SDK 的 all / month / week / day。
+ * SDK 可在测试中注入，生产环境默认使用 `window.toy`。任何排行榜故障都不能
+ * 阻塞生成流程。
  */
 
 export const LEADERBOARD_BOARD = 1;
 
-export type LeaderboardPeriod = "day" | "week" | "month";
+export type LeaderboardPeriod = "all" | "month" | "week" | "day";
 
 export const LEADERBOARD_PERIODS: ReadonlyArray<{
   value: LeaderboardPeriod;
   label: string;
 }> = [
-  { value: "day", label: "24小时" },
-  { value: "week", label: "7天" },
-  { value: "month", label: "30天" },
+  { value: "all", label: "总榜" },
+  { value: "month", label: "月榜" },
+  { value: "week", label: "周榜" },
+  { value: "day", label: "日榜" },
 ];
 
 /** A hanging SDK call must not leave the rank tab stuck on "加载中". */
@@ -61,7 +60,7 @@ function toySdk(): ToyLeaderboardSdk | null {
   return candidate as ToyLeaderboardSdk;
 }
 
-/** Fire-and-forget best-effort submission of the cumulative local count. */
+/** Fire-and-forget best-effort submission of the canonical 胡言乱语值. */
 export async function submitLeaderboardScore(
   score: number,
   sdk: ToyLeaderboardSdk | null = toySdk(),
