@@ -16,7 +16,6 @@ import {
 import {
   COMPACT_MENTAL_STATE_PROMPTS,
   EXEMPLAR_SENTENCES,
-  exemplarOutputsForTopic,
   MENTAL_STATE_PROMPTS,
   MODE_PROMPTS,
   QUALITY_GATE,
@@ -33,7 +32,12 @@ import {
   normalizeTopic,
 } from "../shared/generate/validation.ts";
 import { fallbackForLength } from "../shared/generate/fallback.ts";
-import { isUnsafeGeneratedText, safeFallbackForLength } from "../shared/generate/safety.ts";
+import {
+  isSensitiveRealWorldTopic,
+  isUnsafeGeneratedText,
+  safeFallbackForLength,
+  sensitiveFallbackForLength,
+} from "../shared/generate/safety.ts";
 import {
   TREND_LIBRARY,
   selectTrendingItems,
@@ -139,6 +143,17 @@ test("safety fallbacks stay within the public length contracts", () => {
   }
 });
 
+test("real-world harm topics receive a calm non-joking response", () => {
+  assert.equal(isSensitiveRealWorldTopic("朋友出车祸住院了，我很担心"), true);
+  assert.equal(isSensitiveRealWorldTopic("医院附近有什么好吃的"), false);
+  assert.equal(isSensitiveRealWorldTopic("请解释一下二叉树遍历"), false);
+  for (const length of ["精辟", "中等", "正常"]) {
+    const text = sensitiveFallbackForLength(length);
+    assert.equal(isUnsafeGeneratedText(text), false);
+    assert.match(text, /认真|现实/);
+  }
+});
+
 test("removed mood names remain valid ordinary topic vocabulary", () => {
   const geometry = "老师说这个角看起来是钝角，我回家量了量门框，发现家里到处都是钝角。";
   assert.equal(validateGeneratedText(geometry, "数学", "正常"), null);
@@ -179,14 +194,22 @@ test("recent-output LRU flags near-duplicates for the same topic and mood", () =
 });
 
 test("few-shot exemplars are permanent plagiarism baselines", () => {
-  // The exemplar whose input matches 减肥 is the legit answer for that topic
-  // and is excluded from its own baseline — every other exemplar must stay a
-  // baseline.
-  const excluded = new Set(exemplarOutputsForTopic("减肥"));
   for (const exemplar of EXEMPLAR_SENTENCES) {
-    if (excluded.has(exemplar)) continue;
     assert.ok(recentSimilarity("减肥", "正常", exemplar) > 0.5);
   }
+});
+
+test("matching-topic few-shot examples are omitted from the runtime prompt", () => {
+  const translation = buildRuntimePrompt(
+    "正常", false, "正常", "翻译", "我很困，但还是起床上班了",
+  );
+  assert.ok(!translation.includes("我虽然困得很有原则"));
+  const answer = buildRuntimePrompt(
+    "正常", false, "正常", "回答", "为什么周一来得这么快？",
+  );
+  assert.ok(!answer.includes("周一只好提前进场催它散会"));
+  assert.ok(buildRuntimePrompt("正常", false, "正常", "翻译", "今天下雨了")
+    .includes("我虽然困得很有原则"));
 });
 
 test("buildSystemPrompt layers common, mode, tier, and strict parts", () => {
@@ -424,6 +447,14 @@ test("translation mode rejects the mechanical 'input + tail' echo", () => {
   assert.equal(validateGeneratedText("ChatGPT每天上班前都要先给自己写一封辞职信，写完才有力气继续回答问题。", "ChatGPT", "正常", "正常", "翻译"), null);
 });
 
+test("translation mode rejects invented possession of an object the user forgot", () => {
+  const topic = "手机没电了，但我忘带充电器";
+  const contradiction = "手机没电了，我只好把口袋里的充电器忘得理直气壮。";
+  const faithful = "手机没电了，没带上的充电器只好在家隔空替它加油。";
+  assert.equal(validateGeneratedText(contradiction, topic, "正常", "正常", "翻译"), "mode");
+  assert.equal(validateGeneratedText(faithful, topic, "正常", "正常", "翻译"), null);
+});
+
 test("formulaic greetings must be rewritten, not answered", () => {
   // 「你好」answered like a conversation, plus meta-commentary on the input —
   // both are mode drift for 翻译.
@@ -465,6 +496,14 @@ test("answer mode rewards direct relevance and rejects question repetition", () 
     ),
     null,
   );
+});
+
+test("answer mode does not invent certainty for contextless truth questions", () => {
+  const topic = "这个结果是真是假";
+  const invented = "是真的，毕竟假的结果不会这么认真地问真假。";
+  const honest = "还不能确定，得先核对证据，真假自己不会主动举手。";
+  assert.equal(validateGeneratedText(invented, topic, "正常", "正常", "回答"), "mode");
+  assert.equal(validateGeneratedText(honest, topic, "正常", "正常", "回答"), null);
 });
 
 test("scoring penalizes bureaucratic and numeric filler", () => {
@@ -586,16 +625,12 @@ test("prompt injects only selected context and spends no budget when irrelevant"
     .includes("可选网络语境"));
 });
 
-test("exemplar exclusion needs the bare topic, not a mode-prefixed key", () => {
-  // The relay used to pass `${mode}：${topic}` to recentSimilarity, which broke
-  // the exemplar exclusion — the model's verbatim exemplar plagiarism was then
-  // rejected as a "repeat" (similarity 1.00), forcing the fallback for showcase
-  // topics. The bare topic must exclude the exemplar; the prefixed key must not.
+test("matching-topic exemplars remain blocked as plagiarism", () => {
   const exemplar = "我虽然困得很有原则，但身体为了全勤还是擅自把我送到了工位。";
   const bare = recentSimilarity("我很困，但还是起床上班了", "正常", exemplar);
   const prefixed = recentSimilarity("翻译：我很困，但还是起床上班了", "正常", exemplar);
-  assert.ok(bare < 0.5, `bare topic should exclude the exemplar (got ${bare})`);
-  assert.ok(prefixed > 0.5, `prefixed topic should NOT exclude the exemplar (got ${prefixed})`);
+  assert.ok(bare > 0.5, `bare topic should block the exemplar (got ${bare})`);
+  assert.ok(prefixed > 0.5, `prefixed topic should block the exemplar (got ${prefixed})`);
 });
 
 test("a paraphrase that drops the literal negation word still passes", () => {

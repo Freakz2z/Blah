@@ -10,8 +10,10 @@ import {
   validateGeneratedText,
 } from "../../shared/generate/quality.ts";
 import {
+  isSensitiveRealWorldTopic,
   isUnsafeGeneratedText,
   safeFallbackForLength,
+  sensitiveFallbackForLength,
 } from "../../shared/generate/safety.ts";
 import {
   normalizeGenerationLength,
@@ -572,6 +574,14 @@ const worker = {
     if (isUnsafeGeneratedText(topic)) {
       return jsonResponse(request, env, { error: "unsafe_topic" }, 400);
     }
+    const mode = normalizeGenerationMode(payload?.mode);
+    const generationLength = normalizeGenerationLength(payload?.length);
+    if (isSensitiveRealWorldTopic(topic)) {
+      return jsonResponse(request, env, {
+        text: sensitiveFallbackForLength(generationLength),
+        mechanism: "安全兜底",
+      });
+    }
     const providers = configuredProviders(env);
     if (providers.length === 0) {
       return jsonResponse(request, env, { error: "provider_not_configured" }, 503);
@@ -581,9 +591,6 @@ const worker = {
     const limiterId = env.RATE_LIMITER.idFromName(clientIp);
     const limiterResponse = await env.RATE_LIMITER.get(limiterId).fetch("https://relay-rate-limit/check");
     if (!limiterResponse.ok) return withCors(request, limiterResponse, env);
-
-    const mode = normalizeGenerationMode(payload?.mode);
-    const generationLength = normalizeGenerationLength(payload?.length);
 
     try {
       const { text, mechanism } = await generateWithProviders(

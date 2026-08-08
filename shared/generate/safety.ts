@@ -13,9 +13,36 @@ const UNSAFE_OUTPUT_PATTERNS = [
   /(?:种族灭绝|屠杀平民|歧视|仇恨言论|仇恨攻击|虐待|酷刑)/iu,
 ];
 
+/** Real-world harm and crisis topics that may be allowed as user input but are
+ * not appropriate material for a joke. Keep this narrower than the general
+ * safety block: callers return a calm deterministic response instead of asking
+ * the model to turn the event into a punchline. */
+const SENSITIVE_REAL_WORLD_PATTERNS = [
+  /(?:车祸|交通事故|空难|事故现场|地震|火灾|洪水|灾难|失踪)/iu,
+  /(?:住院|抢救|急救|重病|癌症|去世|死亡|葬礼|遗体|严重受伤)/iu,
+];
+
 export function isUnsafeGeneratedText(text: string): boolean {
   const normalized = text.trim();
   return normalized.length > 0 && UNSAFE_OUTPUT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isSensitiveRealWorldTopic(text: string): boolean {
+  const normalized = text.trim();
+  return normalized.length > 0
+    && SENSITIVE_REAL_WORLD_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+/** Calm response for allowed but inappropriate-to-joke-about real-world harm. */
+export function sensitiveFallbackForLength(generationLength: GenerationLength): string {
+  switch (generationLength) {
+    case "精辟":
+      return "这件事先认真处理。";
+    case "中等":
+      return "这件事不适合拿来生成，先认真处理现实问题。";
+    case "正常":
+      return "这件事涉及真实伤害，不适合拿来生成，先认真处理现实问题。";
+  }
 }
 
 /** Used only when every model/fallback candidate trips the output guard. */

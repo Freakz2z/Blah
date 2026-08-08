@@ -6,7 +6,7 @@
  * are exempt from charset/han-ratio/leak/cliché rules so a topic like
  * 「奶茶」or「ChatGPT」is never penalized for mentioning itself. */
 
-import { EXEMPLAR_SENTENCES, exemplarOutputsForTopic } from "./prompts.ts";
+import { EXEMPLAR_SENTENCES } from "./prompts.ts";
 import {
   GENERATION_LENGTH_LIMITS,
   type GenerationLength,
@@ -63,6 +63,23 @@ const FACT_PHRASE_GROUPS = [
   ["失败", "没成功"],
 ];
 const QUESTION_PREFIX_RE = /^(为什么|为何|怎么|怎样|如何|请问|能不能|可不可以|是不是|是否)/;
+const CONTEXTLESS_VERACITY_RE =
+  /(?:这个|这份|该|上述|结果|消息|说法|内容).{0,12}(?:是真是假|真假|真不真|是否真实|靠谱吗|可信|对不对)/;
+const UNCERTAINTY_MARKER_RE =
+  /(?:(?:还|暂时)?(?:不能|无法|难以|不好)(?:确定|判断|断定)|需要.{0,6}(?:证据|核对|验证)|(?:得|要)先.{0,6}(?:核对|验证)|要看.{0,6}(?:证据|来源))/;
+
+/** Detect the most common factual contradiction from translation candidates:
+ * the input says an object was not brought, while the result puts the same
+ * object on the speaker's person. */
+function contradictsMissingObject(text: string, topic: string): boolean {
+  const match = topic.match(/(?:忘(?:记|了)?带|没(?:有)?带)([^，。！？,.!?；;]{1,12})/u);
+  if (!match) return false;
+  const object = match[1].split(/但|却|就|还|然后|所以|而/u)[0].replace(/了$/u, "").trim();
+  if (Array.from(object).length < 1 || !text.includes(object)) return false;
+  const objectIndex = text.indexOf(object);
+  const nearbyPrefix = text.slice(Math.max(0, objectIndex - 10), objectIndex);
+  return /(?:口袋|背包|包|手|身上|旁边)(?:里|上)?(?:的|那只|那个|一只|一个)?$/u.test(nearbyPrefix);
+}
 
 /** 翻译 must rewrite, not paste the input at the start of the result — the
  * lazy 「原话 + 尾巴」 pattern. A legitimate rewrite may share the subject but
@@ -221,6 +238,13 @@ export function validateGeneratedText(
 
   const punctCount = chars.filter((ch) => PUNCT_RE.test(ch)).length;
   if (punctCount / length > 0.3) return "punct_ratio";
+
+  if (mode === "翻译" && contradictsMissingObject(text, topic)) return "mode";
+  if (
+    mode === "回答"
+    && CONTEXTLESS_VERACITY_RE.test(topic)
+    && !UNCERTAINTY_MARKER_RE.test(text)
+  ) return "mode";
 
   if (generationLength !== "精辟") {
     if (mode === "翻译") {
@@ -489,30 +513,21 @@ const LRU_SENTENCES_PER_KEY = 3;
 const recentByKey = new Map<string, string[]>();
 
 export function recentSimilarity(topic: string, mood: string, text: string): number {
-  // The few-shot exemplars are permanent baselines — when the user's topic
-  // matches an exemplar's, the exemplar itself would otherwise be a perfect,
-  // fully valid "generation" for the model to plagiarize.
-  const excluded = new Set(exemplarOutputsForTopic(topic));
+  // Every few-shot exemplar remains a permanent plagiarism baseline, including
+  // when the user enters the exemplar's original topic. The matching example
+  // is omitted from that request's prompt, so returning it is always repetition.
   const base = EXEMPLAR_SENTENCES.reduce(
-    (max, exemplar) =>
-      excluded.has(exemplar) ? max : Math.max(max, bigramJaccard(exemplar, text)),
+    (max, exemplar) => Math.max(max, bigramJaccard(exemplar, text)),
     0,
   );
   const previous = recentByKey.get(`${topic}|${mood}`) ?? [];
-  // Stored exemplar outputs are the expected answer for a matching topic, not
-  // a "repeat" — comparing against them would reject the legit answer and force
-  // the fallback on the very next request.
   return previous.reduce(
-    (max, prev) =>
-      excluded.has(prev) ? max : Math.max(max, bigramJaccard(prev, text)),
+    (max, prev) => Math.max(max, bigramJaccard(prev, text)),
     base,
   );
 }
 
 export function rememberResult(topic: string, mood: string, text: string): void {
-  // The topic's own exemplar output is the expected answer — storing it would
-  // make the next request reject it as a repeat.
-  if (exemplarOutputsForTopic(topic).includes(text)) return;
   const key = `${topic}|${mood}`;
   const list = recentByKey.get(key) ?? [];
   recentByKey.delete(key);

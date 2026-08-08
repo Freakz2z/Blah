@@ -5,6 +5,8 @@
  * Selection is conservative: no clear match means no meme prompt at all.
  */
 
+import { isSensitiveRealWorldTopic } from "./safety.ts";
+
 export type TrendKind = "current" | "evergreen" | "seasonal" | "archive";
 
 export interface TrendSignal {
@@ -334,11 +336,6 @@ export const TREND_LIBRARY: readonly TrendingItem[] = [
   },
 ];
 
-const SENSITIVE_TOPIC_TERMS = [
-  "去世", "死亡", "自杀", "自残", "癌症", "重病", "抢救", "急救", "医院",
-  "车祸", "事故", "灾难", "地震", "火灾", "失踪", "报警", "受伤", "葬礼", "遗体",
-];
-
 const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Shanghai",
   year: "numeric",
@@ -415,8 +412,7 @@ export function selectTrendingItems(
   const topic = rawTopic.trim();
   if (!topic || limit <= 0) return [];
 
-  const explicitlyMentioned = TREND_LIBRARY.some((item) => exactMention(item, topic));
-  if (!explicitlyMentioned && SENSITIVE_TOPIC_TERMS.some((term) => topic.includes(term))) return [];
+  if (isSensitiveRealWorldTopic(topic)) return [];
 
   const dateParts = shanghaiDateParts(date);
   const { dateKey } = dateParts;

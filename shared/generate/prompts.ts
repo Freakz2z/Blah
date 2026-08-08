@@ -44,24 +44,23 @@ export const EXEMPLAR_SENTENCES = [
   ...EXEMPLAR_PARTS.map((part) => part.output),
 ];
 
-/** The exemplar inputs the examples were written from, normalized by stripping
- * trailing punctuation. When the user's topic matches one, its own exemplar
- * output is a legitimate expected answer — the plagiarism baseline must exempt
- * it, otherwise users typing the README's showcased examples always trip the
- * guard and land on the fallback. */
-export const EXEMPLAR_TOPICS = new Set(
-  EXEMPLAR_PARTS.filter((part) => part.input)
-    .map((part) => part.input.replace(/[。！？.!?]+$/u, "")),
-);
+function normalizeExemplarInput(value: string): string {
+  return value.trim().replace(/[。！？.!?]+$/u, "");
+}
 
-/** Exemplar outputs whose input matches the given topic (trailing punctuation
- * normalized). Empty when the topic is not an exemplar input. */
-export function exemplarOutputsForTopic(topic: string): string[] {
-  const normalized = topic.replace(/[。！？.!?]+$/u, "");
-  if (!EXEMPLAR_TOPICS.has(normalized)) return [];
-  return EXEMPLAR_PARTS.filter(
-    (part) => part.input.replace(/[。！？.!?]+$/u, "") === normalized,
-  ).map((part) => part.output);
+/** Do not show a few-shot example written from the user's exact input. It
+ * turns a structural demonstration into an answer key and invites verbatim
+ * repetition. Other inputs still receive the normal style demonstration. */
+export function runtimeExampleForTopic(
+  mode: GenerationMode,
+  mood: string,
+  topic: string,
+): string | undefined {
+  const example = MODE_MOOD_EXAMPLES[mode][mood];
+  if (!example) return undefined;
+  const { input } = extractExemplarParts(example);
+  if (input && normalizeExemplarInput(input) === normalizeExemplarInput(topic)) return undefined;
+  return example;
 }
 
 export const MENTAL_STATE_PROMPTS: Record<string, string> = {
@@ -91,12 +90,13 @@ export function buildRuntimePrompt(
   topic = "",
   date = new Date(),
 ): string {
+  const runtimeExample = runtimeExampleForTopic(mode, mood, topic);
   const parts = [
     COMMON_PROMPT,
     generationLength !== "正常" ? COMPACT_MENTAL_STATE_PROMPTS[mood] : MENTAL_STATE_PROMPTS[mood],
     MODE_PROMPTS[mode],
-    generationLength === "正常"
-      ? `结构示范（只学保留原意和落梗方式，禁止复用名词）：${MODE_MOOD_EXAMPLES[mode][mood]}`
+    generationLength === "正常" && runtimeExample
+      ? `结构示范（只学保留原意和落梗方式，禁止复用名词）：${runtimeExample}`
       : undefined,
     trendingPromptSection(topic, date),
     GENERATION_LENGTH_PROMPTS[generationLength],
