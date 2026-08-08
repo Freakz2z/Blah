@@ -97,6 +97,10 @@ test("validateGeneratedText treats the length contract as approximate", () => {
     validateGeneratedText("考研先别急着下结论，录取通知还在练习敲门。", "考研", "正常", "中等"),
     null,
   );
+  assert.equal(
+    validateGeneratedText("概率是怕被算准，才把自己藏进骰子里。", "概率", "正常", "精辟", "自由"),
+    "length",
+  );
 });
 
 test("validateGeneratedText rejects non-Chinese garbage but exempts topic chars", () => {
