@@ -367,6 +367,19 @@ test("fallback keeps answer mode valid for statements, inline questions, and sho
   }
 });
 
+test("high-frequency method fallbacks stay actionable and topic-specific", () => {
+  for (const [topic, marker] of [
+    ["手机总是没电怎么办", "手机"],
+    ["如何停止刷短视频", "视频"],
+  ]) {
+    for (const length of ["精辟", "中等", "正常"]) {
+      const text = fallbackForLength(topic, "正常", length, "回答");
+      assert.ok(text.includes(marker), `${topic}/${length}: ${text}`);
+      assert.equal(validateGeneratedText(text, topic, "正常", length, "回答"), null);
+    }
+  }
+});
+
 test("answer anchors never slice Latin words or leave question-word debris", () => {
   // 「ChatGPT」stays whole instead of becoming「Chat」.
   assert.match(fallbackForLength("ChatGPT为什么这么慢", "正常", "中等", "回答"), /ChatGPT/);

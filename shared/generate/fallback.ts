@@ -250,6 +250,33 @@ const LONG_ANSWER_TEMPLATES: Record<string, string> = {
   other: "{subject}，因为日历昨晚替它答应了，今天只好过来兑现。",
 };
 
+function specificAnswerFallback(
+  topic: string,
+  generationLength: GenerationLength,
+): string | null {
+  if (/(?:手机|平板|电脑).*(?:没电|电量|充电)|(?:没电|电量|充电).*(?:手机|平板|电脑)/u.test(topic)) {
+    switch (generationLength) {
+      case "精辟":
+        return "先给手机喂电。";
+      case "中等":
+        return "先给手机接上电，让充电器替它叫醒电量。";
+      case "正常":
+        return "先给手机接上电，让充电器替它叫醒电量，醒来后再继续装忙。";
+    }
+  }
+  if (/(?:短视频|刷视频).*(?:停不下来|停止|戒掉)|(?:停止|戒掉).*(?:短视频|刷视频)/u.test(topic)) {
+    switch (generationLength) {
+      case "精辟":
+        return "先把视频关掉。";
+      case "中等":
+        return "先把短视频关掉，让手指下班后找不到工位。";
+      case "正常":
+        return "先把短视频关掉，再把手机放远，让手指下班后找不到原来的工位。";
+    }
+  }
+  return null;
+}
+
 function translationFallback(
   topic: string,
   mood: string,
@@ -284,6 +311,8 @@ function answerFallback(
   mood: string,
   generationLength: GenerationLength,
 ): string {
+  const specific = specificAnswerFallback(topic, generationLength);
+  if (specific) return specific;
   if (generationLength === "精辟") return conciseAnswer(topic);
 
   const kind = answerKind(topic);
