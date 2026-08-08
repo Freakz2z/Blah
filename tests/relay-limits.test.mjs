@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import worker, { isLocalDevOrigin, originIsAllowed } from "../toy-relay/src/index.ts";
+import worker, {
+  isLocalDevOrigin,
+  originIsAllowed,
+  parseJudgeChoice,
+} from "../toy-relay/src/index.ts";
 
 const EMPTY_ENV = {};
+
+test("quality judge choices parse strictly inside the candidate range", () => {
+  assert.equal(parseJudgeChoice("2", 3), 2);
+  assert.equal(parseJudgeChoice('{"choice":1}', 3), 1);
+  assert.equal(parseJudgeChoice("全部不合格，选择 0。", 3), 0);
+  assert.equal(parseJudgeChoice("4", 3), null);
+  assert.equal(parseJudgeChoice("第二个", 3), null);
+});
 
 test("local dev origins are allowed on the relay", () => {
   for (const origin of [
