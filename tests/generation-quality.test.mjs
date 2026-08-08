@@ -230,6 +230,12 @@ test("matching-topic few-shot examples are omitted from the runtime prompt", () 
     .includes("我虽然困得很有原则"));
 });
 
+test("concise runtime prompt has no answer-shaped example to imitate", () => {
+  const prompt = buildRuntimePrompt("正常", false, "精辟", "自由", "二叉树");
+  assert.ok(!prompt.includes("括号太重"));
+  assert.ok(!prompt.includes("示范（不可复用）"));
+});
+
 test("buildSystemPrompt layers common, mode, tier, and strict parts", () => {
   const prompt = buildSystemPrompt("极差", false, "正常", "回答");
   assert.ok(prompt.startsWith(SKILL_SOURCE));
