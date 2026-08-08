@@ -34,7 +34,12 @@ import {
 } from "../shared/generate/validation.ts";
 import { fallbackForLength } from "../shared/generate/fallback.ts";
 import { isUnsafeGeneratedText, safeFallbackForLength } from "../shared/generate/safety.ts";
-import { rotatedMemes, TRENDING_MEMES } from "../shared/generate/trending.ts";
+import {
+  TREND_LIBRARY,
+  selectTrendingItems,
+  trendIsActive,
+  trendingPromptSection,
+} from "../shared/generate/trending.ts";
 const VALID_SENTENCE = "考研的本质是给未来的自己排一个看不见的队伍，排到就算成功。";
 
 test("cleanGeneratedText strips nested prefixes and wrapping quotes", () => {
@@ -508,21 +513,77 @@ test("scoring penalizes twists that flip the input's emotional direction", () =>
   assert.ok(sameScore.score > flippedScore.score);
 });
 
-test("trending rotation is deterministic per day and stays inside the library", () => {
-  const day = new Date(2026, 7, 8);
-  const first = rotatedMemes(day);
-  const second = rotatedMemes(day);
-  assert.deepEqual(first.map((m) => m.term), second.map((m) => m.term));
-  assert.ok(first.length >= 1 && first.length <= 6);
-  for (const item of first) {
-    assert.ok(TRENDING_MEMES.includes(item), `rotated meme ${item.term} not in library`);
+test("trend metadata is unique, reviewable, and lifecycle-valid", () => {
+  const ids = new Set();
+  const terms = new Set();
+  for (const item of TREND_LIBRARY) {
+    assert.match(item.id, /^[a-z0-9-]+$/);
+    assert.ok(!ids.has(item.id), `duplicate trend id: ${item.id}`);
+    assert.ok(!terms.has(item.term), `duplicate trend term: ${item.term}`);
+    ids.add(item.id);
+    terms.add(item.term);
+    assert.ok(item.hint.length >= 20, `${item.term} needs self-contained guidance`);
+    assert.ok(item.signals.length >= 1, `${item.term} needs relevance signals`);
+    for (const signal of item.signals) {
+      assert.ok(signal.text.trim().length > 0, `${item.term} has an empty signal`);
+      assert.ok(signal.weight > 0, `${item.term} has a non-positive signal weight`);
+    }
+    assert.match(item.reviewedAt, /^\d{4}-\d{2}-\d{2}$/);
+    if (item.activeFrom) assert.match(item.activeFrom, /^\d{4}-\d{2}-\d{2}$/);
+    if (item.activeUntil) assert.match(item.activeUntil, /^\d{4}-\d{2}-\d{2}$/);
+    if (item.activeFrom && item.activeUntil) assert.ok(item.activeFrom <= item.activeUntil);
+    if (item.kind === "seasonal") assert.ok(item.seasonalWindows?.length);
+    if (item.kind === "current") {
+      assert.ok(item.activeFrom && item.activeUntil, `${item.term} needs a bounded lifecycle`);
+      assert.ok(item.sources.length >= 1, `${item.term} needs at least one public source`);
+      for (const source of item.sources) assert.match(source.url, /^https:\/\//);
+    }
   }
-  const nextDay = rotatedMemes(new Date(2026, 7, 9));
-  assert.notDeepEqual(
-    first.map((m) => m.term),
-    nextDay.map((m) => m.term),
-    "different days should rotate to different subsets",
-  );
+});
+
+test("trend selection is relevant, deterministic, and capped at two", () => {
+  const day = new Date("2026-08-08T04:00:00Z");
+  const topic = "请帮我检查这个测试结果到底是真是假";
+  const first = selectTrendingItems(topic, day);
+  const second = selectTrendingItems(topic, day);
+  assert.deepEqual(first.map((item) => item.id), second.map((item) => item.id));
+  assert.equal(first[0]?.term, "我要验牌");
+  assert.ok(first.length <= 2);
+  assert.equal(selectTrendingItems("请解释一下二叉树遍历", day).length, 0);
+});
+
+test("trend exclusions prevent literal collisions and serious-context jokes", () => {
+  const day = new Date("2026-08-08T04:00:00Z");
+  assert.ok(selectTrendingItems("我在服务器部署了一个AI智能体", day)
+    .some((item) => item.term === "养龙虾"));
+  assert.ok(!selectTrendingItems("今晚去吃小龙虾和海鲜", day)
+    .some((item) => item.term === "养龙虾"));
+  assert.deepEqual(selectTrendingItems("朋友出车祸受伤了，我该怎么办", day), []);
+});
+
+test("seasonal and archived trends obey Asia/Shanghai lifecycle windows", () => {
+  const school = TREND_LIBRARY.find((item) => item.id === "school-opening");
+  const dogDays = TREND_LIBRARY.find((item) => item.id === "dog-days");
+  const cryingHorse = TREND_LIBRARY.find((item) => item.id === "crying-horse-archive");
+  assert.ok(school && dogDays && cryingHorse);
+  assert.equal(trendIsActive(school, new Date("2026-08-09T16:30:00Z")), true);
+  assert.equal(trendIsActive(school, new Date("2026-06-01T04:00:00Z")), false);
+  assert.equal(trendIsActive(dogDays, new Date("2026-08-08T04:00:00Z")), true);
+  assert.equal(trendIsActive(dogDays, new Date("2026-12-08T04:00:00Z")), false);
+  assert.equal(trendIsActive(cryingHorse, new Date("2026-02-08T04:00:00Z")), false);
+});
+
+test("prompt injects only selected context and spends no budget when irrelevant", () => {
+  const day = new Date("2026-08-08T04:00:00Z");
+  const relevant = trendingPromptSection("请核对这个测试结果是真是假", day);
+  assert.match(relevant, /我要验牌/);
+  assert.match(relevant, /最多借用一个/);
+  assert.ok(relevant.length < 420, `trend appendix is too large: ${relevant.length}`);
+  assert.equal(trendingPromptSection("请解释一下二叉树遍历", day), "");
+  assert.ok(buildRuntimePrompt("正常", false, "正常", "回答", "请核对真假", day)
+    .includes("我要验牌"));
+  assert.ok(!buildRuntimePrompt("正常", false, "正常", "回答", "请解释二叉树", day)
+    .includes("可选网络语境"));
 });
 
 test("exemplar exclusion needs the bare topic, not a mode-prefixed key", () => {

@@ -34,7 +34,7 @@
 
 这套规则由 [`skills/blahblah-generator/SKILL.md`](skills/blahblah-generator/SKILL.md) 维护，并编译给 Toy、中转 Worker 和测试共同使用。
 
-生成提示词还会注入一份人工维护的流行梗库（[`shared/generate/trending.ts`](shared/generate/trending.ts)）作为可选素材：梗只能充当「歪」的角度，必须服务输入的事实骨架；输入与任何梗无关时模型不会硬塞。本地兜底也不再是「输入 + 万能尾巴」——它按模式和长度从多套歪理池里抽取，不同输入得到不同结尾。
+生成提示词还接入了经过人工审校的网络语境层（[`shared/generate/trending.ts`](shared/generate/trending.ts)）：每项都有生效期、复核日期、适用信号、禁用语境和来源。系统会按输入相关性最多选择两项；无明确匹配或涉及真实伤害、灾难、急救等严肃内容时完全不注入。过期项自动失效，当前项超过 45 天未复核会让测试失败；候选也不会仅因出现热词获得额外分数。本地兜底不依赖该语境层，仍按模式和长度从多套歪理池里抽取。
 
 ## 快速开始
 
@@ -148,7 +148,7 @@ shared/generate/
 ├── prompts.ts                 # Skill 与运行配置组装
 ├── generated-skill.ts         # 自动生成，请勿手动编辑
 ├── quality.ts                 # 清洗、校验、评分与去重
-├── trending.ts                # 流行梗库（可选素材）
+├── trending.ts                # 有生命周期和相关性选择的网络语境层
 ├── fallback.ts                # 本地兜底结果
 ├── safety.ts                  # 输出安全拦截
 └── validation.ts              # 输入和长度约束

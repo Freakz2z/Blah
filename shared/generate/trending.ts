@@ -1,174 +1,487 @@
-/** Curated trending-meme library for the Toy relay.
+/** Context-aware internet-culture library for the Toy relay.
  *
- * Unlike the generation protocol (SKILL.md), this file holds volatile content:
- * current Chinese internet memes and seasonal hot topics. It is injected into
- * the runtime prompt as *optional* flavor material — the model may use a meme
- * as the twist, but never at the expense of the input's fact skeleton. The
- * quality scorer also consults this file so trending terms are exempt from the
- * stale-cliché penalty.
- *
- * MAINTENANCE: memes go stale in weeks. Refresh this list every 1–2 months.
- * Prefer widely-known, non-political terms; skip anything divisive. Keep each
- * `hint` self-contained so a model with a stale knowledge cutoff can still use
- * the term correctly. */
+ * A term is never injected merely because it is popular. Every active item has
+ * a lifecycle, a set of weighted relevance signals, and optional exclusions.
+ * Selection is conservative: no clear match means no meme prompt at all.
+ */
+
+export type TrendKind = "current" | "evergreen" | "seasonal" | "archive";
+
+export interface TrendSignal {
+  text: string;
+  weight: number;
+}
+
+export interface SeasonalWindow {
+  /** Inclusive month-day in MM-DD form, evaluated in Asia/Shanghai. */
+  start: string;
+  /** Inclusive month-day in MM-DD form, evaluated in Asia/Shanghai. */
+  end: string;
+}
+
+export interface TrendSource {
+  label: string;
+  url: string;
+}
 
 export interface TrendingItem {
-  /** The meme term or hot topic as it appears in a sentence. */
+  id: string;
   term: string;
-  /** One or two sentences: what it means and how to deploy it in a joke. */
+  aliases?: readonly string[];
+  /** Self-contained usage guidance sent to the model only after selection. */
   hint: string;
-  /** Optional example of the term used naturally. */
-  example?: string;
+  kind: TrendKind;
+  family: string;
+  signals: readonly TrendSignal[];
+  avoidSignals?: readonly string[];
+  activeFrom?: string;
+  activeUntil?: string;
+  seasonalWindows?: readonly SeasonalWindow[];
+  priority: number;
+  reviewedAt: string;
+  sources: readonly TrendSource[];
 }
 
-/** Current internet memes (2025–2026), non-political and usable as humor material. */
-export const TRENDING_MEMES: readonly TrendingItem[] = [
+const SINA_2026_REVIEW: TrendSource = {
+  label: "新浪新闻：2026 上半年热梗盘点",
+  url: "https://www.sina.cn/news/detail/5315839670881108.html",
+};
+
+const ADQUAN_2026_REVIEW: TrendSource = {
+  label: "广告门：2026 上半年热梗与传播语境",
+  url: "https://m.adquan.com/detail/0-361636",
+};
+
+const BILIBILI_VERIFY_CARDS: TrendSource = {
+  label: "哔哩哔哩：我要验牌原版及二创",
+  url: "https://www.bilibili.com/video/BV12VFYzXExE/",
+};
+
+const BILIBILI_RAISE_LOBSTER: TrendSource = {
+  label: "哔哩哔哩：养龙虾语境",
+  url: "https://www.bilibili.com/video/BV1Z9wWznEaa/",
+};
+
+/**
+ * Editorially reviewed library. `archive` entries stay here so lifecycle
+ * behavior is testable and old terms cannot silently re-enter circulation.
+ */
+export const TREND_LIBRARY: readonly TrendingItem[] = [
   {
-    term: "圆头耄耋",
-    hint: "谐音「圆头猫爹」：脑袋圆、脾气大的猫（尤其橘猫），被赋予家长式威严的人设。可写「它家那只圆头耄耋在旁边冷眼旁观」。",
+    id: "backhand-opossum",
+    term: "背手负鼠",
+    hint: "用背着手淡定旁观的负鼠形象，表达松弛、看戏或事情再急也先观察一下；只适合轻松日常，不用于真实事故。",
+    kind: "current",
+    family: "calm-observer",
+    signals: [
+      { text: "松弛", weight: 8 },
+      { text: "淡定", weight: 7 },
+      { text: "围观", weight: 7 },
+      { text: "看戏", weight: 7 },
+      { text: "旁观", weight: 6 },
+      { text: "发呆", weight: 5 },
+      { text: "不着急", weight: 6 },
+      { text: "休息", weight: 4 },
+      { text: "等着", weight: 4 },
+    ],
+    avoidSignals: ["事故", "受伤", "报警", "失踪"],
+    activeFrom: "2026-05-01",
+    activeUntil: "2026-09-30",
+    priority: 9,
+    reviewedAt: "2026-08-08",
+    sources: [SINA_2026_REVIEW, ADQUAN_2026_REVIEW],
   },
   {
-    term: "高雅人士",
-    hint: "一只被 AI 做成跳《但愿人长久》舞的企鹅表情包，「笨拙又优雅」的反差感。可用「笨拙地保持高雅」的句式。",
+    id: "verify-cards",
+    term: "我要验牌",
+    hint: "把核对真假、检查证据或不肯轻信写成一本正经的“验牌”；适合测试、审核、辨真伪，不要用于考试作弊或赌博建议。",
+    kind: "current",
+    family: "verification",
+    signals: [
+      { text: "验证", weight: 8 },
+      { text: "核对", weight: 8 },
+      { text: "检查", weight: 7 },
+      { text: "真假", weight: 8 },
+      { text: "证据", weight: 7 },
+      { text: "怀疑", weight: 6 },
+      { text: "测试", weight: 5 },
+      { text: "审核", weight: 5 },
+      { text: "确认", weight: 4 },
+    ],
+    avoidSignals: ["作弊", "赌场", "下注"],
+    activeFrom: "2025-11-01",
+    activeUntil: "2026-09-30",
+    priority: 10,
+    reviewedAt: "2026-08-08",
+    sources: [BILIBILI_VERIFY_CARDS],
   },
   {
-    term: "旋转猫",
-    hint: "oiiai猫：一张呆立猫图配上 oiiaioiiai 声不断旋转的魔性电子梗。适合形容「停不下来、在原地打转」。",
+    id: "snow-mountain-fox",
+    term: "雪山救狐狸",
+    aliases: ["雪山救狐"],
+    hint: "借“雪山救狐后故事反转”的共同语境，写帮助、报恩或回报突然走偏；必须保留原输入中的帮助关系，不复述完整故事。",
+    kind: "current",
+    family: "favor-return",
+    signals: [
+      { text: "帮忙", weight: 7 },
+      { text: "帮助", weight: 7 },
+      { text: "救", weight: 6 },
+      { text: "报恩", weight: 9 },
+      { text: "回报", weight: 7 },
+      { text: "恩情", weight: 7 },
+      { text: "狐狸", weight: 8 },
+      { text: "雪山", weight: 8 },
+    ],
+    avoidSignals: ["救护车", "抢救", "伤亡", "灾区"],
+    activeFrom: "2026-02-01",
+    activeUntil: "2026-08-31",
+    priority: 7,
+    reviewedAt: "2026-08-08",
+    sources: [SINA_2026_REVIEW, ADQUAN_2026_REVIEW],
   },
   {
-    term: "爱你老己",
-    hint: "谐音「爱你老己」（爱你+自己）：表达自我宠爱、反内耗的口号。可用「今天先爱你老己」这类自我关怀句式。",
+    id: "raise-lobster",
+    term: "养龙虾",
+    hint: "在 AI 智能体、自动化或部署语境里，把配置和运行智能体说成“养龙虾”；只用于技术自嘲，不把普通吃虾场景强行解释成 AI。",
+    kind: "current",
+    family: "ai-agent",
+    signals: [
+      { text: "OpenClaw", weight: 10 },
+      { text: "openclaw", weight: 10 },
+      { text: "智能体", weight: 9 },
+      { text: "agent", weight: 8 },
+      { text: "AI助手", weight: 8 },
+      { text: "AI 助手", weight: 8 },
+      { text: "自动化", weight: 6 },
+      { text: "部署", weight: 5 },
+      { text: "服务器", weight: 4 },
+    ],
+    avoidSignals: ["吃龙虾", "小龙虾", "海鲜", "过敏"],
+    activeFrom: "2026-03-01",
+    activeUntil: "2026-09-30",
+    priority: 8,
+    reviewedAt: "2026-08-08",
+    sources: [SINA_2026_REVIEW, ADQUAN_2026_REVIEW, BILIBILI_RAISE_LOBSTER],
   },
   {
-    term: "高速运转的机械进入中国",
-    hint: "东北口音一本正经播报荒诞新闻的句式，把不相关的词硬凑成貌似合理的话。可仿其「一本正经说胡话」的语气。",
+    id: "ai-fruit",
+    term: "AI水果",
+    aliases: ["水果恋爱岛"],
+    hint: "把 AI 生成的拟人水果和恋爱真人秀式关系当作轻微反差；只用于 AI、水果、配对或综艺语境，不凭空添加角色。",
+    kind: "current",
+    family: "ai-character",
+    signals: [
+      { text: "AI视频", weight: 8 },
+      { text: "AI 视频", weight: 8 },
+      { text: "水果", weight: 8 },
+      { text: "恋爱综艺", weight: 8 },
+      { text: "真人秀", weight: 7 },
+      { text: "配对", weight: 6 },
+      { text: "拟人", weight: 6 },
+    ],
+    activeFrom: "2026-03-01",
+    activeUntil: "2026-08-31",
+    priority: 6,
+    reviewedAt: "2026-08-08",
+    sources: [ADQUAN_2026_REVIEW],
   },
   {
-    term: "意大利面拌42号混凝土",
-    hint: "同样是东北口音荒诞新闻体，形容把毫不相干的东西强行组合还煞有介事。可写「它把X和Y像意大利面拌混凝土一样搅在一起」。",
-  },
-  {
-    term: "东方明珠防御塔",
-    hint: "调侃上海消费主义：在东方明珠下喝廉价饮品会被「防御塔射击」。适合写「太便宜会被东方明珠锁定的」句式。",
-  },
-  {
-    term: "弗雷尔卓德",
-    hint: "《英雄联盟》里的极寒之地，被网友用来代指东北，带自嘲与冷到极致的意味。适合形容「冷」或「东北」。",
-  },
-  {
-    term: "XX一定要有XX",
-    hint: "「盒饭一定要有菜和饭」式的废话总结句，听着有道理其实是废话。可用「X一定要有Y，这样才显得X」的句式制造废话感。",
-  },
-  {
-    term: "大公公掉粪坑啦",
-    hint: "电影《刀见笑》台词，被 AI 整活视频带火的荒诞梗，适合形容「突然传来一句没头没尾的坏消息」。",
-  },
-  {
-    term: "city不city",
-    hint: "「洋气不洋气、时髦不时髦」的询问句式，常带点调侃。可用「很city」夸人或自嘲。",
-  },
-  {
+    id: "work-flavor",
     term: "班味",
-    hint: "上班族自嘲：指上班后整个人散发出的疲惫感。可用「班味」形容「上班上到人味都没了」。",
+    hint: "形容上班后自然流露的疲惫感；只用于工作、自嘲和通勤语境，不用来贬低他人职业。",
+    kind: "evergreen",
+    family: "work-fatigue",
+    signals: [
+      { text: "上班", weight: 7 },
+      { text: "下班", weight: 6 },
+      { text: "通勤", weight: 7 },
+      { text: "工位", weight: 6 },
+      { text: "加班", weight: 6 },
+      { text: "工作", weight: 4 },
+      { text: "周一", weight: 5 },
+    ],
+    priority: 5,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
-    term: "牛马",
-    hint: "打工人自嘲：指被工作压榨、身不由己的人。可用「牛马」自嘲式形容忙碌或身不由己。",
-  },
-  {
+    id: "read-random-reply",
     term: "已读乱回",
-    hint: "收到消息但答非所问、敷衍回应。可用「已读乱回」形容敷衍或心不在焉的回应。",
+    hint: "形容看见消息却答非所问；适合聊天、回复和沟通错位，不用于严肃求助或紧急信息。",
+    kind: "evergreen",
+    family: "communication",
+    signals: [
+      { text: "消息", weight: 6 },
+      { text: "聊天", weight: 6 },
+      { text: "回复", weight: 7 },
+      { text: "回答", weight: 5 },
+      { text: "群聊", weight: 7 },
+      { text: "微信", weight: 6 },
+      { text: "看见", weight: 4 },
+    ],
+    avoidSignals: ["求救", "报警", "急救"],
+    priority: 5,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
+    id: "sneaky-feel",
     term: "偷感",
-    hint: "偷偷摸摸做事的既视感，带点心虚或低调。可用「偷感很重」形容偷偷摸摸。",
+    hint: "形容动作偷偷摸摸、带点心虚；只用于无害的小动作，不用于真实违法、跟踪或侵犯隐私。",
+    kind: "evergreen",
+    family: "sneaky-action",
+    signals: [
+      { text: "偷偷", weight: 8 },
+      { text: "悄悄", weight: 7 },
+      { text: "心虚", weight: 7 },
+      { text: "躲着", weight: 6 },
+      { text: "藏", weight: 4 },
+      { text: "偷感", weight: 10 },
+    ],
+    avoidSignals: ["盗窃", "偷拍", "跟踪", "偷窥", "违法"],
+    priority: 4,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
+    id: "hard-control",
     term: "硬控",
-    hint: "被某事物牢牢控制住、挪不开眼。可用「被X硬控」句式形容被吸引住。",
+    hint: "形容被内容或事物牢牢吸引、停不下来；适合视频、游戏、音乐和兴趣，不用于真实控制或胁迫。",
+    kind: "evergreen",
+    family: "attention",
+    signals: [
+      { text: "停不下来", weight: 8 },
+      { text: "上头", weight: 7 },
+      { text: "着迷", weight: 7 },
+      { text: "吸引", weight: 5 },
+      { text: "刷视频", weight: 7 },
+      { text: "循环播放", weight: 7 },
+      { text: "沉迷", weight: 6 },
+    ],
+    avoidSignals: ["控制欲", "胁迫", "绑架"],
+    priority: 4,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
-    term: "天塌了",
-    hint: "夸张表达大事不好、天要塌了。可用「天塌了」夸张形容小事被当成大事。",
-  },
-];
-
-/** Seasonal / evergreen hot topics the model may reference as a fresh anchor.
- * Rotate with the calendar; keep each entry self-explanatory. */
-export const TRENDING_TOPICS: readonly TrendingItem[] = [
-  {
+    id: "dog-days",
     term: "三伏天",
-    hint: "盛夏最热时段。适合写「热到三伏天都开始加班」式的夸张。",
+    hint: "只在盛夏炎热语境中，把日常动作写成连三伏天都承受不住；不要在无关季节或室内普通话题中出现。",
+    kind: "seasonal",
+    family: "summer-heat",
+    signals: [
+      { text: "热", weight: 6 },
+      { text: "高温", weight: 8 },
+      { text: "空调", weight: 6 },
+      { text: "太阳", weight: 5 },
+      { text: "中暑", weight: 7 },
+      { text: "夏天", weight: 6 },
+    ],
+    seasonalWindows: [{ start: "07-01", end: "08-31" }],
+    priority: 5,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
+    id: "school-opening",
     term: "开学",
-    hint: "八月下旬至九月初的开学季焦虑。可用「作业/暑假先开学」的拟人。",
+    hint: "只在开学季的作业、课程和假期结束语境中使用，让作业或暑假先一步行动；不要泛化到普通工作安排。",
+    kind: "seasonal",
+    family: "school-calendar",
+    signals: [
+      { text: "开学", weight: 10 },
+      { text: "暑假", weight: 8 },
+      { text: "寒假", weight: 8 },
+      { text: "作业", weight: 7 },
+      { text: "返校", weight: 8 },
+      { text: "上课", weight: 6 },
+      { text: "老师", weight: 4 },
+      { text: "学生", weight: 4 },
+    ],
+    seasonalWindows: [
+      { start: "02-10", end: "03-15" },
+      { start: "08-01", end: "09-15" },
+    ],
+    priority: 6,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
   {
-    term: "奥运会",
-    hint: "夏季体育盛事。可用「把日常琐事比作参赛/申办」的句式。",
+    id: "crying-horse-archive",
+    term: "哭哭马",
+    hint: "2026 马年初的委屈脸玩偶语境；已退出默认注入，只保留生命周期记录。",
+    kind: "archive",
+    family: "emotion-toy",
+    signals: [{ text: "委屈", weight: 6 }],
+    activeFrom: "2025-12-01",
+    activeUntil: "2026-05-31",
+    priority: 0,
+    reviewedAt: "2026-08-08",
+    sources: [SINA_2026_REVIEW],
+  },
+  {
+    id: "love-yourself-archive",
+    term: "爱你老己",
+    hint: "2025 年末至 2026 年初的自我关怀谐音；已退出默认注入。",
+    kind: "archive",
+    family: "self-care",
+    signals: [{ text: "爱自己", weight: 6 }],
+    activeFrom: "2025-10-01",
+    activeUntil: "2026-06-30",
+    priority: 0,
+    reviewedAt: "2026-08-08",
+    sources: [],
   },
 ];
 
-/** Deterministic daily rotation: a stable subset of memes per day keeps the
- * prompt fresh without churning every request. Same date → same subset, so
- * regenerations stay consistent within a day. */
-export function rotatedMemes(date = new Date()): readonly TrendingItem[] {
-  const dayKey = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
-  let hash = 0;
-  for (let i = 0; i < dayKey.length; i++) hash = (hash * 31 + dayKey.charCodeAt(i)) >>> 0;
-  const count = Math.min(6, TRENDING_MEMES.length);
-  const pool = [...TRENDING_MEMES];
-  const picked: TrendingItem[] = [];
-  for (let i = 0; i < count; i++) {
-    const index = hash % pool.length;
-    picked.push(pool[index]);
-    pool.splice(index, 1);
-    hash = (hash * 31 + 7) >>> 0;
-  }
-  return picked;
+const SENSITIVE_TOPIC_TERMS = [
+  "去世", "死亡", "自杀", "自残", "癌症", "重病", "抢救", "急救", "医院",
+  "车祸", "事故", "灾难", "地震", "火灾", "失踪", "报警", "受伤", "葬礼", "遗体",
+];
+
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function shanghaiDateParts(date: Date): { dateKey: string; monthDay: string } {
+  const parts = SHANGHAI_DATE_FORMATTER.formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  return { dateKey: `${year}-${month}-${day}`, monthDay: `${month}-${day}` };
 }
 
-/** Builds the optional trending section appended to the runtime prompt. */
-export function trendingPromptSection(): string {
-  const memes = rotatedMemes().map(
-    (item) => `- ${item.term}：${item.hint}`,
+function insideSeasonalWindow(monthDay: string, window: SeasonalWindow): boolean {
+  if (window.start <= window.end) return monthDay >= window.start && monthDay <= window.end;
+  return monthDay >= window.start || monthDay <= window.end;
+}
+
+function trendIsActiveAt(
+  item: TrendingItem,
+  parts: { dateKey: string; monthDay: string },
+): boolean {
+  if (item.kind === "archive") return false;
+  const { dateKey, monthDay } = parts;
+  if (item.activeFrom && dateKey < item.activeFrom) return false;
+  if (item.activeUntil && dateKey > item.activeUntil) return false;
+  if (item.kind === "seasonal") {
+    return Boolean(item.seasonalWindows?.some((window) => insideSeasonalWindow(monthDay, window)));
+  }
+  return true;
+}
+
+export function trendIsActive(item: TrendingItem, date = new Date()): boolean {
+  return trendIsActiveAt(item, shanghaiDateParts(date));
+}
+
+function includesNormalized(topic: string, signal: string): boolean {
+  return topic.toLocaleLowerCase("zh-CN").includes(signal.toLocaleLowerCase("zh-CN"));
+}
+
+function exactMention(item: TrendingItem, topic: string): boolean {
+  return [item.term, ...(item.aliases ?? [])].some((term) => includesNormalized(topic, term));
+}
+
+function relevanceScore(item: TrendingItem, topic: string): number {
+  if (item.avoidSignals?.some((signal) => includesNormalized(topic, signal))) return -Infinity;
+  if (exactMention(item, topic)) return 100 + item.priority;
+  const signalScore = item.signals.reduce(
+    (score, signal) => score + (includesNormalized(topic, signal.text) ? signal.weight : 0),
+    0,
   );
-  const topics = TRENDING_TOPICS.map(
-    (item) => `- ${item.term}：${item.hint}`,
-  );
+  return signalScore >= 4 ? signalScore + item.priority / 10 : -Infinity;
+}
+
+function stableTieBreak(topic: string, dateKey: string, id: string): number {
+  const input = `${topic}\u0000${dateKey}\u0000${id}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash;
+}
+
+export function selectTrendingItems(
+  rawTopic: string,
+  date = new Date(),
+  limit = 2,
+): readonly TrendingItem[] {
+  const topic = rawTopic.trim();
+  if (!topic || limit <= 0) return [];
+
+  const explicitlyMentioned = TREND_LIBRARY.some((item) => exactMention(item, topic));
+  if (!explicitlyMentioned && SENSITIVE_TOPIC_TERMS.some((term) => topic.includes(term))) return [];
+
+  const dateParts = shanghaiDateParts(date);
+  const { dateKey } = dateParts;
+  const ranked = TREND_LIBRARY
+    .filter((item) => trendIsActiveAt(item, dateParts))
+    .map((item) => ({
+      item,
+      score: relevanceScore(item, topic),
+      tie: stableTieBreak(topic, dateKey, item.id),
+    }))
+    .filter((entry) => Number.isFinite(entry.score))
+    .sort((a, b) => b.score - a.score || b.item.priority - a.item.priority || a.tie - b.tie);
+
+  const selected: TrendingItem[] = [];
+  const families = new Set<string>();
+  for (const entry of ranked) {
+    if (families.has(entry.item.family)) continue;
+    selected.push(entry.item);
+    families.add(entry.item.family);
+    if (selected.length >= Math.min(limit, 2)) break;
+  }
+  return selected;
+}
+
+/** Compact prompt appendix. No relevant item means no appendix and no token cost. */
+export function trendingPromptSection(topic: string, date = new Date()): string {
+  const selected = selectTrendingItems(topic, date);
+  if (selected.length === 0) return "";
   return [
-    "可选素材（按需使用，不用也可以）：",
-    "流行梗：",
-    ...memes,
-    "当前热点：",
-    ...topics,
-    "使用规则：梗或热点只能充当「歪」的角度，必须服务于输入里的事实；",
-    "输入本身与任何梗无关时不要硬塞；一旦使用就直接写进句子，不解释梗本身。",
+    "可选网络语境（最多借用一个；不用通常比硬塞更好）：",
+    ...selected.map((item) => `- ${item.term}：${item.hint}`),
+    "只在它与输入中的具体人、物或动作直接相关时使用；不得仅复述梗名，不解释出处，不改变原意或情绪方向。",
   ].join("\n");
 }
 
-/** All terms (memes + topics) for scoring lookups. */
-export const TRENDING_TERMS: readonly string[] = [
-  ...TRENDING_MEMES.map((item) => item.term),
-  ...TRENDING_TOPICS.map((item) => item.term),
-];
+export const TRENDING_TERMS: readonly string[] = TREND_LIBRARY.flatMap(
+  (item) => [item.term, ...(item.aliases ?? [])],
+);
 
-/** True when the term appears in the text as a standalone unit. Handles the
- * 「XX一定要有XX」form by matching the leading fragment. */
-export function textContainsTrendingTerm(text: string, term: string): boolean {
-  if (!text) return false;
-  if (term.includes("XX")) {
-    const prefix = term.split("XX")[0];
-    return prefix.length > 0 && text.includes(prefix);
-  }
-  return text.includes(term);
+/** Build-time editorial gate: current terms must be re-reviewed frequently. */
+export const TREND_MAX_REVIEW_AGE_DAYS = 45;
+
+export interface TrendLibraryHealth {
+  activeCurrentIds: readonly string[];
+  inactiveCurrentIds: readonly string[];
+  staleCurrentIds: readonly string[];
 }
 
-/** Terms from the trending library that appear in the output but not in the
- * topic — i.e. memes the model actually injected on its own. */
-export function injectedTrendingTerms(text: string, topic: string): string[] {
-  return TRENDING_TERMS.filter(
-    (term) => textContainsTrendingTerm(text, term) && !topic.includes(term),
-  );
+export function trendLibraryHealth(date = new Date()): TrendLibraryHealth {
+  const dateParts = shanghaiDateParts(date);
+  const { dateKey } = dateParts;
+  const today = Date.parse(`${dateKey}T00:00:00Z`);
+  const currentItems = TREND_LIBRARY.filter((item) => item.kind === "current");
+  const activeCurrentIds = currentItems
+    .filter((item) => trendIsActiveAt(item, dateParts))
+    .map((item) => item.id);
+  const inactiveCurrentIds = currentItems
+    .filter((item) => !trendIsActiveAt(item, dateParts))
+    .map((item) => item.id);
+  const staleCurrentIds = currentItems
+    .filter((item) => {
+      const reviewed = Date.parse(`${item.reviewedAt}T00:00:00Z`);
+      return !Number.isFinite(reviewed)
+        || (today - reviewed) / 86_400_000 > TREND_MAX_REVIEW_AGE_DAYS;
+    })
+    .map((item) => item.id);
+  return { activeCurrentIds, inactiveCurrentIds, staleCurrentIds };
 }

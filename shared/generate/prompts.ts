@@ -88,6 +88,8 @@ export function buildRuntimePrompt(
   strict = false,
   generationLength: GenerationLength = "正常",
   mode: GenerationMode = "翻译",
+  topic = "",
+  date = new Date(),
 ): string {
   const parts = [
     COMMON_PROMPT,
@@ -96,7 +98,7 @@ export function buildRuntimePrompt(
     generationLength === "正常"
       ? `结构示范（只学保留原意和落梗方式，禁止复用名词）：${MODE_MOOD_EXAMPLES[mode][mood]}`
       : undefined,
-    trendingPromptSection(),
+    trendingPromptSection(topic, date),
     GENERATION_LENGTH_PROMPTS[generationLength],
     QUALITY_GATE,
   ];
@@ -109,7 +111,9 @@ export function buildSystemPrompt(
   strict = false,
   generationLength: GenerationLength = "正常",
   mode: GenerationMode = "翻译",
+  topic = "",
+  date = new Date(),
 ): string {
-  const runtime = buildRuntimePrompt(mood, strict, generationLength, mode);
+  const runtime = buildRuntimePrompt(mood, strict, generationLength, mode, topic, date);
   return `${SKILL_SOURCE}\n\n---\n\n${RUNTIME_INSTRUCTION}\n\n${runtime}`;
 }

@@ -249,12 +249,14 @@ function configuredProviders(env: Env): ProviderConfig[] {
 function buildToyPrompt(
   generationLength: GenerationLength,
   mode: GenerationMode,
+  topic: string,
 ): string {
   return `${RUNTIME_INSTRUCTION}\n\n${buildRuntimePrompt(
     DEFAULT_MOOD,
     false,
     generationLength,
     mode,
+    topic,
   )}`;
 }
 
@@ -387,11 +389,14 @@ async function generateWithProvider(
   mode: GenerationMode,
 ): Promise<GeneratedResult | null> {
   const candidateParams = CANDIDATE_PARAMS[mode];
+  // Select the network-culture context once so all candidates compete under
+  // the exact same prompt and a date boundary cannot split one request.
+  const systemPrompt = buildToyPrompt(generationLength, mode, topic);
   const settled = await Promise.allSettled(
     candidateParams.map((params, index) =>
       requestCompletion(
         provider,
-        buildToyPrompt(generationLength, mode),
+        systemPrompt,
         topic,
         mode,
         params,

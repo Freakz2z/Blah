@@ -8,6 +8,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    version: "v0.12",
+    date: "2026-08-08",
+    items: [
+      "热梗层改为按输入语境选择，无关内容不再注入",
+      "新增生效期、季节窗口、严肃语境关闭与 45 天复核闸门",
+      "更新 2026 年网络语境，并移除热词命中的无条件排序奖励",
+    ],
+  },
+  {
     version: "v0.11",
     date: "2026-08-08",
     items: [
@@ -36,7 +45,7 @@ export const CHANGELOG: readonly ChangelogEntry[] = [
       "生成改为三步分解：提取骨架 → 点名载体 → 成句",
       "兜底率优化：保真检查从硬拒降为扣分，翻译兜底率 30% → 约 10%",
       "长度限制软化：不再硬性限制字数，大约即可",
-      "热梗库扩充至 17 条并每日轮换",
+      "热梗库扩充并加入首版每日轮换（已在 v0.12 升级为相关性选择）",
       "修复示范话题兜底与重复拒绝问题",
     ],
   },

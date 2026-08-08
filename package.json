@@ -14,6 +14,7 @@
     "preview:toy": "vite preview --config toy/vite.config.ts",
     "test": "npm run build:toy && node --test --experimental-strip-types tests/*.test.mjs",
     "test:unit": "npm run prepare:skill && node --test --experimental-strip-types tests/generation-quality.test.mjs",
+    "eval:live": "node --experimental-strip-types scripts/evaluate-live.mjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

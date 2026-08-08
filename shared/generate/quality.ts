@@ -7,7 +7,6 @@
  * 「奶茶」or「ChatGPT」is never penalized for mentioning itself. */
 
 import { EXEMPLAR_SENTENCES, exemplarOutputsForTopic } from "./prompts.ts";
-import { injectedTrendingTerms } from "./trending.ts";
 import {
   GENERATION_LENGTH_LIMITS,
   type GenerationLength,
@@ -383,10 +382,6 @@ export function scoreGeneratedText(
   if (topicPositive && NEGATIVE_EMOTION_WORDS.some((word) => text.includes(word) && !topic.includes(word))) {
     score -= 10;
   }
-
-  // Current memes injected on the model's own initiative are a plus, capped so
-  // a single tasteful reference can never outrank semantic fidelity.
-  score += Math.min(injectedTrendingTerms(text, topic).length * 6, 12);
 
   if (!BUREAUCRACY_WORDS.some((word) => topic.includes(word))) {
     const bureaucracyHits = BUREAUCRACY_WORDS.filter((word) => text.includes(word)).length;

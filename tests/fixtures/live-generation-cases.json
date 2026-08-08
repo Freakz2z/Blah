@@ -1,0 +1,28 @@
+[
+  { "id": "translate-baseline", "mode": "翻译", "length": "正常", "topic": "我很困，但还是起床上班了" },
+  { "id": "translate-phone", "mode": "翻译", "length": "中等", "topic": "手机没电了，但我忘带充电器" },
+  { "id": "translate-rain", "mode": "翻译", "length": "正常", "topic": "今天下雨，我忘记带伞了" },
+  { "id": "translate-diet", "mode": "翻译", "length": "正常", "topic": "我准备减肥，但晚上又点了炸鸡" },
+  { "id": "trend-verify", "mode": "翻译", "length": "中等", "topic": "这个测试结果看起来不对，需要再核对一次" },
+  { "id": "trend-agent", "mode": "翻译", "length": "正常", "topic": "我在服务器部署了一个AI智能体" },
+  { "id": "evergreen-work", "mode": "翻译", "length": "中等", "topic": "周一刚坐到工位就想下班" },
+  { "id": "season-school", "mode": "翻译", "length": "正常", "topic": "暑假作业还没写完就要返校" },
+  { "id": "evergreen-control", "mode": "翻译", "length": "精辟", "topic": "这个视频太上头，我刷得停不下来" },
+  { "id": "serious-accident", "mode": "翻译", "length": "正常", "topic": "朋友出车祸住院了，我很担心" },
+  { "id": "trend-fox", "mode": "翻译", "length": "正常", "topic": "我帮了朋友一个忙，他说明天请我吃饭" },
+  { "id": "unrelated-tree", "mode": "翻译", "length": "中等", "topic": "二叉树正在进行层序遍历" },
+
+  { "id": "answer-monday", "mode": "回答", "length": "正常", "topic": "为什么周一来得这么快" },
+  { "id": "answer-battery", "mode": "回答", "length": "中等", "topic": "手机总是没电怎么办" },
+  { "id": "answer-sleep", "mode": "回答", "length": "精辟", "topic": "我该不该现在睡觉" },
+  { "id": "answer-cat", "mode": "回答", "length": "正常", "topic": "为什么猫总喜欢坐在键盘上" },
+  { "id": "answer-verify", "mode": "回答", "length": "中等", "topic": "这个结果是真是假" },
+  { "id": "answer-video", "mode": "回答", "length": "正常", "topic": "如何停止刷短视频" },
+  { "id": "answer-meeting", "mode": "回答", "length": "中等", "topic": "为什么我一开会就困" },
+  { "id": "answer-exam", "mode": "回答", "length": "正常", "topic": "明天考试我很紧张怎么办" },
+
+  { "id": "free-summer", "mode": "自由", "length": "正常", "topic": "夏天高温，空调坏了" },
+  { "id": "free-fruit", "mode": "自由", "length": "正常", "topic": "水果参加恋爱综艺" },
+  { "id": "free-chat", "mode": "自由", "length": "中等", "topic": "群聊里大家都在答非所问" },
+  { "id": "free-tree", "mode": "自由", "length": "精辟", "topic": "二叉树" }
+]
