@@ -125,11 +125,6 @@ interface QualityCandidate {
   index: number;
 }
 
-export interface JudgeVerdict {
-  choice: number;
-  score: number;
-}
-
 const CANDIDATE_PARAMS: Record<
   GenerationMode,
   [SamplingParams, SamplingParams, SamplingParams]
@@ -159,10 +154,9 @@ const CANDIDATE_PARAMS: Record<
 const JUDGE_PARAMS: SamplingParams = {
   temperature: 0.1,
   topP: 0.25,
-  maxTokens: 24,
+  maxTokens: 12,
   timeoutMs: 8_000,
 };
-const MIN_JUDGE_SCORE = 82;
 
 const REPAIR_PARAMS: readonly [SamplingParams, SamplingParams] = [
   { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 12_000 },
@@ -300,7 +294,6 @@ function buildRepairPrompt(
   generationLength: GenerationLength,
   mode: GenerationMode,
   topic: string,
-  attempt: number,
 ): string {
   const conciseRule = generationLength === "精辟"
     ? "\n精辟档额外要求：只写一个一眼能懂的完整主谓或判断关系；拒绝生造搭配、含混缩写和只靠字面碰撞的硬梗。技术名词应使用其最熟悉的性质做一次简单反转或拟人。"
@@ -309,9 +302,7 @@ function buildRepairPrompt(
 
 # 定向重写（最高优先级）
 
-${attempt === 1
-    ? "上一批候选没有通过质量检查。重新从输入出发写一句，不要修补或复述上一版。"
-    : "上一轮定向重写仍未达到发布标准。必须换一个全新的具体角度，禁止沿用上一轮的关系和句式。"}
+上一批候选没有通过质量检查。重新从输入出发写一句，不要修补或复述上一版。
 必须优先保住输入事实或直接回答问题，再完成一个具体、意外但能理解的落点。
 禁止用「事情、原因、理由、结局、计划、时间」充当与任何输入都兼容的万能主语，除非输入本身出现这些词。
 ${conciseRule}
@@ -327,34 +318,21 @@ const JUDGE_SYSTEM_PROMPT = `你是中文短句的最终质量裁判。用户消
 5. 仅仅复述输入、陈述常识、做平淡的同义改写，或没有清楚荒谬关系的一律不合格。
 6. 精辟档必须是一眼能懂的完整主谓或判断关系；生造搭配、强行缩写、无法解释的词语碰撞一律不合格。
 7. 在以上条件都满足时，选择更意外、更自然、更精炼的一句。
-给最佳候选打 0 到 100 的绝对质量分：事实保真或回答切题占 35 分，关系清楚占 25 分，输入特异性占 20 分，意外且自然占 20 分。任何事实冲突、答非所问或含混词语碰撞最高 59 分；普通复述或常识句最高 69 分。只有 82 分以上才算可直接发布。
-始终输出最佳候选的「序号|实际分数」，即使低于 82 分也要保留其序号，例如「2|76」；只有所有候选都存在事实冲突、答非所问或无法理解时才输出「0|最高实际分」。不要输出其他文字。`;
+只输出一个整数：最佳候选的序号；若全部不合格输出 0。不要输出其他文字。`;
 
-export function parseJudgeVerdict(raw: string, candidateCount: number): JudgeVerdict | null {
+export function parseJudgeChoice(raw: string, candidateCount: number): number | null {
   const normalized = raw.trim();
-  const jsonVerdict = (() => {
+  const jsonChoice = (() => {
     try {
-      const value = JSON.parse(normalized) as { choice?: unknown; score?: unknown };
-      return typeof value?.choice === "number" && typeof value?.score === "number"
-        ? { choice: value.choice, score: value.score }
-        : null;
+      const value = JSON.parse(normalized) as { choice?: unknown } | number;
+      if (typeof value === "number") return value;
+      return typeof value?.choice === "number" ? value.choice : null;
     } catch {
       return null;
     }
   })();
-  const delimited = normalized.match(/^\s*(\d+)\s*[|｜]\s*(\d+)\s*$/u);
-  const verdict = jsonVerdict ?? (delimited
-    ? { choice: Number(delimited[1]), score: Number(delimited[2]) }
-    : null);
-  return verdict
-    && Number.isInteger(verdict.choice)
-    && verdict.choice >= 0
-    && verdict.choice <= candidateCount
-    && Number.isInteger(verdict.score)
-    && verdict.score >= 0
-    && verdict.score <= 100
-    ? verdict
-    : null;
+  const parsed = jsonChoice ?? Number(normalized.match(/(?:^|\D)(\d+)(?:\D|$)/u)?.[1]);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= candidateCount ? parsed : null;
 }
 
 async function readOllamaStream(response: Response): Promise<ProviderCompletion> {
@@ -485,7 +463,6 @@ interface GeneratedResult {
   /** Winning mechanism name, or null when no model result survived (fallback). */
   mechanism: string | null;
   qualityPath: "model" | "repair" | "fallback";
-  qualityScore: number | null;
 }
 
 function rankCandidateBatch(
@@ -530,7 +507,7 @@ async function judgeCandidates(
   generationLength: GenerationLength,
   mode: GenerationMode,
   candidates: QualityCandidate[],
-): Promise<JudgeVerdict | null> {
+): Promise<number | null> {
   try {
     const completion = await requestMessages(provider, [
       { role: "system", content: JUDGE_SYSTEM_PROMPT },
@@ -548,7 +525,7 @@ async function judgeCandidates(
       },
     ], JUDGE_PARAMS);
     if (completion.finishReason !== "stop") return null;
-    return parseJudgeVerdict(completion.content, candidates.length);
+    return parseJudgeChoice(completion.content, candidates.length);
   } catch (error) {
     console.warn(
       `${provider.name} quality judge failed`,
@@ -588,31 +565,21 @@ async function generateWithProvider(
     mode,
     "candidate",
   );
-  const initialVerdict = initial.length
+  const judgeChoice = initial.length
     ? await judgeCandidates(provider, topic, generationLength, mode, initial)
-    : { choice: 0, score: 0 };
+    : 0;
 
-  const initialChoice = initialVerdict
-    && initialVerdict.choice > 0
-      ? initial[initialVerdict.choice - 1]?.text
-      : initial[0]?.text;
-  let bestAvailable = initialChoice
-    ? {
-        text: initialChoice,
-        score: initialVerdict?.choice ? initialVerdict.score : null,
-        path: "model" as GeneratedResult["qualityPath"],
-      }
-    : null;
-  let text = initialVerdict
-    && initialVerdict.choice > 0
-    && initialVerdict.score >= MIN_JUDGE_SCORE
-      ? initialChoice
+  // A missing/unparseable judge response degrades to the deterministic scorer;
+  // an explicit 0 means the judge found every candidate semantically flawed.
+  let text = judgeChoice === null
+    ? initial[0]?.text
+    : judgeChoice > 0
+      ? initial[judgeChoice - 1]?.text
       : undefined;
   let qualityPath: GeneratedResult["qualityPath"] = "model";
-  let qualityScore = text ? initialVerdict?.score ?? null : null;
 
-  for (let attempt = 1; !text && attempt <= 2; attempt++) {
-    const repairPrompt = buildRepairPrompt(generationLength, mode, topic, attempt);
+  if (!text) {
+    const repairPrompt = buildRepairPrompt(generationLength, mode, topic);
     const repaired = await Promise.allSettled(
       REPAIR_PARAMS.map((params) => requestCompletion(
         provider,
@@ -630,37 +597,19 @@ async function generateWithProvider(
       mode,
       "repair",
     );
-    const repairVerdict = repairCandidates.length
-      ? await judgeCandidates(provider, topic, generationLength, mode, repairCandidates)
-      : null;
-    const repairedChoice = repairVerdict && repairVerdict.choice > 0
-      ? repairCandidates[repairVerdict.choice - 1]?.text
-      : repairCandidates[0]?.text;
-    if (repairedChoice) {
-      const repairScore = repairVerdict?.choice ? repairVerdict.score : null;
-      if (
-        !bestAvailable
-        || (repairScore !== null && (bestAvailable.score === null || repairScore > bestAvailable.score))
-      ) {
-        bestAvailable = { text: repairedChoice, score: repairScore, path: "repair" };
-      }
-      if (repairScore !== null && repairScore >= MIN_JUDGE_SCORE) {
-        text = repairedChoice;
-        qualityPath = "repair";
-        qualityScore = repairScore;
-      }
+    // If repair fails, a validator-approved initial candidate is still safer
+    // than the generic template; only an empty initial batch falls through.
+    if (repairCandidates[0]?.text) {
+      text = repairCandidates[0].text;
+      qualityPath = "repair";
+    } else {
+      text = initial[0]?.text;
     }
-  }
-
-  if (!text && bestAvailable) {
-    text = bestAvailable.text;
-    qualityPath = bestAvailable.path;
-    qualityScore = bestAvailable.score;
   }
 
   if (!text || isUnsafeGeneratedText(text)) return null;
   rememberResult(topic, DEFAULT_MOOD, text);
-  return { text, mechanism: null, qualityPath, qualityScore };
+  return { text, mechanism: null, qualityPath };
 }
 
 async function generateWithProviders(
@@ -682,7 +631,7 @@ async function generateWithProviders(
 
   const fallback = fallbackForLength(topic, DEFAULT_MOOD, generationLength, mode);
   const text = isUnsafeGeneratedText(fallback) ? safeFallbackForLength(generationLength) : fallback;
-  return { text, mechanism: "兜底", qualityPath: "fallback", qualityScore: null };
+  return { text, mechanism: "兜底", qualityPath: "fallback" };
 }
 
 export class RateLimiter {
@@ -791,7 +740,6 @@ const worker = {
         text: sensitiveFallbackForLength(generationLength),
         mechanism: "安全兜底",
         qualityPath: "policy",
-        qualityScore: null,
       });
     }
     if (mode === "回答" && isContextlessVeracityTopic(topic)) {
@@ -799,7 +747,6 @@ const worker = {
         text: veracityFallbackForLength(generationLength),
         mechanism: "事实兜底",
         qualityPath: "policy",
-        qualityScore: null,
       });
     }
     const providers = configuredProviders(env);
@@ -813,13 +760,13 @@ const worker = {
     if (!limiterResponse.ok) return withCors(request, limiterResponse, env);
 
     try {
-      const { text, mechanism, qualityPath, qualityScore } = await generateWithProviders(
+      const { text, mechanism, qualityPath } = await generateWithProviders(
         providers,
         topic,
         generationLength,
         mode,
       );
-      return jsonResponse(request, env, { text, mechanism, qualityPath, qualityScore });
+      return jsonResponse(request, env, { text, mechanism, qualityPath });
     } catch (error) {
       console.warn("toy relay failed", error instanceof Error ? error.message : "unknown");
       return jsonResponse(request, env, { error: "upstream_unavailable" }, 502);

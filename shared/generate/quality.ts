@@ -216,7 +216,7 @@ export function validateGeneratedText(
   // 精辟 is the one explicitly terse product choice. Keep a small buffer over
   // the 4–8 prompt target for natural Chinese, but reject paragraph-like lines
   // that ignore the choice entirely and let the repair pass shorten them.
-  if (generationLength === "精辟" && hanCount > 12) return "length";
+  if (generationLength === "精辟" && hanCount > 14) return "length";
 
   if (!chars.every((ch) => CHAR_WHITELIST_RE.test(ch) || topicChars.has(ch))) return "charset";
 
