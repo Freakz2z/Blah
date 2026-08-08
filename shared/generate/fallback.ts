@@ -326,7 +326,12 @@ function freeFallback(
   generationLength: GenerationLength,
 ): string {
   if (generationLength === "精辟") {
-    return pick(["灵感先到站。", "脑洞先开门。", "联想先出发。"], topic);
+    const subject = sentenceFragment(topic, 6) || "灵感";
+    const ending = pick(
+      ["先学会偷懒。", "拒绝按定义来。", "把正经忘了。", "决定反着工作。"],
+      topic,
+    );
+    return `${subject}${ending}`;
   }
   if (generationLength === "中等") {
     const twist = pick(FREE_TWISTS[mood] ?? FREE_TWISTS["正常"], topic)

@@ -35,6 +35,7 @@ const OLLAMA_ENDPOINT = "https://ollama.com/api/chat";
 const OLLAMA_MODEL = "deepseek-v4-flash:0731";
 const DEFAULT_MOOD = "正常";
 const RATE_LIMIT_WINDOW_MS = 60_000;
+const GENERATION_DEADLINE_MS = 9_000;
 /** Loose but abuse-bounded: a normal request uses three candidates plus one
  * judge call; only rejected batches use two more repair candidates. */
 const RATE_LIMIT_MAX_REQUESTS = 30;
@@ -155,13 +156,22 @@ const JUDGE_PARAMS: SamplingParams = {
   temperature: 0.1,
   topP: 0.25,
   maxTokens: 12,
-  timeoutMs: 8_000,
+  timeoutMs: 1_500,
 };
 
 const REPAIR_PARAMS: readonly [SamplingParams, SamplingParams] = [
-  { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 12_000 },
-  { temperature: 0.85, topP: 0.88, maxTokens: 64, timeoutMs: 12_000 },
+  { temperature: 0.55, topP: 0.78, maxTokens: 64, timeoutMs: 2_500 },
+  { temperature: 0.85, topP: 0.88, maxTokens: 64, timeoutMs: 2_500 },
 ];
+
+function paramsWithinDeadline(
+  params: SamplingParams,
+  deadlineAt: number,
+): SamplingParams | null {
+  const remaining = deadlineAt - Date.now() - 150;
+  if (remaining < 250) return null;
+  return { ...params, timeoutMs: Math.min(params.timeoutMs, remaining) };
+}
 
 function allowedOrigins(env: Env): Set<string> {
   const configured = env.TOY_ALLOWED_ORIGINS
@@ -507,8 +517,11 @@ async function judgeCandidates(
   generationLength: GenerationLength,
   mode: GenerationMode,
   candidates: QualityCandidate[],
+  deadlineAt: number,
 ): Promise<number | null> {
   try {
+    const params = paramsWithinDeadline(JUDGE_PARAMS, deadlineAt);
+    if (!params) return null;
     const completion = await requestMessages(provider, [
       { role: "system", content: JUDGE_SYSTEM_PROMPT },
       {
@@ -523,7 +536,7 @@ async function judgeCandidates(
           })),
         }),
       },
-    ], JUDGE_PARAMS);
+    ], params);
     if (completion.finishReason !== "stop") return null;
     return parseJudgeChoice(completion.content, candidates.length);
   } catch (error) {
@@ -540,21 +553,23 @@ async function generateWithProvider(
   topic: string,
   generationLength: GenerationLength,
   mode: GenerationMode,
+  deadlineAt: number,
 ): Promise<GeneratedResult | null> {
   const candidateParams = CANDIDATE_PARAMS[mode];
   // Select the network-culture context once so all candidates compete under
   // the exact same prompt and a date boundary cannot split one request.
   const systemPrompt = buildToyPrompt(generationLength, mode, topic);
   const settled = await Promise.allSettled(
-    candidateParams.map((params, index) =>
-      requestCompletion(
+    candidateParams.map((params) => {
+      const bounded = paramsWithinDeadline({ ...params, timeoutMs: 4_500 }, deadlineAt);
+      return bounded ? requestCompletion(
         provider,
         systemPrompt,
         topic,
         mode,
-        params,
-      ),
-    ),
+        bounded,
+      ) : Promise.reject(new Error("generation_deadline"));
+    }),
   );
 
   const initial = rankCandidateBatch(
@@ -566,7 +581,7 @@ async function generateWithProvider(
     "candidate",
   );
   const judgeChoice = initial.length
-    ? await judgeCandidates(provider, topic, generationLength, mode, initial)
+    ? await judgeCandidates(provider, topic, generationLength, mode, initial, deadlineAt)
     : 0;
 
   // A missing/unparseable judge response degrades to the deterministic scorer;
@@ -580,15 +595,16 @@ async function generateWithProvider(
 
   if (!text) {
     const repairPrompt = buildRepairPrompt(generationLength, mode, topic);
-    const repaired = await Promise.allSettled(
-      REPAIR_PARAMS.map((params) => requestCompletion(
+    const repaired = await Promise.allSettled(REPAIR_PARAMS.map((params) => {
+      const bounded = paramsWithinDeadline(params, deadlineAt);
+      return bounded ? requestCompletion(
         provider,
         repairPrompt,
         topic,
         mode,
-        params,
-      )),
-    );
+        bounded,
+      ) : Promise.reject(new Error("generation_deadline"));
+    }));
     const repairCandidates = rankCandidateBatch(
       provider,
       repaired,
@@ -618,12 +634,15 @@ async function generateWithProviders(
   generationLength: GenerationLength,
   mode: GenerationMode,
 ): Promise<GeneratedResult> {
+  const deadlineAt = Date.now() + GENERATION_DEADLINE_MS;
   for (const provider of providers) {
+    if (deadlineAt - Date.now() < 250) break;
     const result = await generateWithProvider(
       provider,
       topic,
       generationLength,
       mode,
+      deadlineAt,
     );
     if (result) return result;
     console.warn(`${provider.name} produced no quality-approved result; trying next provider`);
