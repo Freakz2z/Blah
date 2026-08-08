@@ -3,17 +3,18 @@ import { test } from "node:test";
 import worker, {
   isLocalDevOrigin,
   originIsAllowed,
-  parseJudgeChoice,
+  parseJudgeVerdict,
 } from "../toy-relay/src/index.ts";
 
 const EMPTY_ENV = {};
 
-test("quality judge choices parse strictly inside the candidate range", () => {
-  assert.equal(parseJudgeChoice("2", 3), 2);
-  assert.equal(parseJudgeChoice('{"choice":1}', 3), 1);
-  assert.equal(parseJudgeChoice("全部不合格，选择 0。", 3), 0);
-  assert.equal(parseJudgeChoice("4", 3), null);
-  assert.equal(parseJudgeChoice("第二个", 3), null);
+test("quality judge verdicts require a bounded choice and absolute score", () => {
+  assert.deepEqual(parseJudgeVerdict("2|87", 3), { choice: 2, score: 87 });
+  assert.deepEqual(parseJudgeVerdict('{"choice":1,"score":92}', 3), { choice: 1, score: 92 });
+  assert.deepEqual(parseJudgeVerdict("0|68", 3), { choice: 0, score: 68 });
+  assert.equal(parseJudgeVerdict("2", 3), null);
+  assert.equal(parseJudgeVerdict("4|90", 3), null);
+  assert.equal(parseJudgeVerdict("2|101", 3), null);
 });
 
 test("local dev origins are allowed on the relay", () => {

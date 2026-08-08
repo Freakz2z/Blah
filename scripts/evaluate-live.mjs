@@ -86,6 +86,7 @@ async function evaluateCase(item) {
     text,
     mechanism: typeof body?.mechanism === "string" ? body.mechanism : body?.mechanism ?? null,
     qualityPath: typeof body?.qualityPath === "string" ? body.qualityPath : null,
+    qualityScore: Number.isFinite(body?.qualityScore) ? body.qualityScore : null,
     invalidReason,
     score,
     selectedTerms,
@@ -115,6 +116,9 @@ await Promise.all(Array.from({ length: Math.min(concurrency, cases.length) }, as
 }));
 
 const latencies = results.filter((item) => item.ok).map((item) => item.latencyMs);
+const qualityScores = results
+  .map((item) => item.qualityScore)
+  .filter((score) => Number.isFinite(score));
 const summary = {
   endpoint,
   generatedAt: timestamp,
@@ -124,6 +128,12 @@ const summary = {
   fallbackCount: results.filter((item) => item.mechanism === "兜底").length,
   repairCount: results.filter((item) => item.qualityPath === "repair").length,
   policyCount: results.filter((item) => item.qualityPath === "policy").length,
+  qualityScore: {
+    average: qualityScores.length
+      ? Math.round(qualityScores.reduce((sum, value) => sum + value, 0) / qualityScores.length)
+      : null,
+    minimum: qualityScores.length ? Math.min(...qualityScores) : null,
+  },
   trendEligible: results.filter((item) => item.selectedTerms.length > 0).length,
   trendUsed: results.filter((item) => item.usedSelectedTerms.length > 0).length,
   unselectedTrendLeak: results.filter((item) => item.unselectedTrendTerms.length > 0).length,
