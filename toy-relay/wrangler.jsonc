@@ -13,7 +13,7 @@
   ],
   "vars": {
     "TOY_ALLOWED_ORIGINS": "https://www.bilibili.com,https://bilibili.com,https://www.bilibilitoy.com,https://bilibilitoy.com",
-    "TOY_PROVIDER": "deepseek"
+    "TOY_PROVIDER": "ollama"
   },
   "durable_objects": {
     "bindings": [

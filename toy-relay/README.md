@@ -5,8 +5,8 @@
 ## 运行契约
 
 - `POST /generate`
-- 当前线上固定使用 DeepSeek 官方 `deepseek-v4-flash`
-- Ollama Cloud `deepseek-v4-flash:0731` 的流式优化仍保留，可随时切回测试
+- 当前线上固定使用 Ollama Cloud `deepseek-v4-flash:0731`
+- DeepSeek 官方 `deepseek-v4-flash` 适配仍保留，可随时切回
 - 通过 `TOY_PROVIDER` 控制提供商：`ollama` / `deepseek`；未设置时才按密钥顺序回退
 - DeepSeek 关闭思考模式
 - API Key 只从 Cloudflare Secrets `OLLAMA_API_KEY` / `DEEPSEEK_API_KEY` 读取
@@ -32,7 +32,7 @@ npx wrangler secret put DEEPSEEK_API_KEY --config toy-relay/wrangler.jsonc
 npx wrangler secret put OLLAMA_API_KEY --config toy-relay/wrangler.jsonc
 ```
 
-当前 `wrangler.jsonc` 已将 `TOY_PROVIDER` 设为 `deepseek`。若后续需要重新测试 Ollama，改为 `ollama` 后重新部署即可，无需删除另一把 Secret。
+当前 `wrangler.jsonc` 已将 `TOY_PROVIDER` 设为 `ollama`。若后续需要切回 DeepSeek 官方，改为 `deepseek` 后重新部署即可，无需删除另一把 Secret。
 
 ## 健康检查
 

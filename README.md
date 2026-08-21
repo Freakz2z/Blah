@@ -65,10 +65,10 @@ npm run lint        # TypeScript 类型检查
 | 生成接口 | `POST /generate` |
 | 反馈接口 | `POST /feedback` |
 | 健康检查 | `GET /health` |
-| 当前模型 | DeepSeek 官方 `deepseek-v4-flash` |
+| 当前模型 | Ollama Cloud `deepseek-v4-flash:0731` |
 | 思考模式 | 已关闭 |
 
-Ollama Cloud 的 `deepseek-v4-flash:0731` 适配仍保留在 Worker 代码中，可通过 `TOY_PROVIDER=ollama` 切换测试。当前部署使用 DeepSeek 官方，API Key 只从 Cloudflare Secrets 读取。
+DeepSeek 官方的 `deepseek-v4-flash` 适配仍保留在 Worker 代码中，可通过 `TOY_PROVIDER=deepseek` 切回。当前部署使用 Ollama Cloud，API Key 只从 Cloudflare Secrets 读取。
 
 部署或预检：
 
